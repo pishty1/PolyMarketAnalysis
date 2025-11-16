@@ -2,6 +2,13 @@ import websocket
 import json
 import threading
 import time
+from kafka import KafkaProducer
+from kafka.errors import KafkaError
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class PolymarketRTDSClient:
     """
@@ -11,12 +18,14 @@ class PolymarketRTDSClient:
     to various real-time data streams provided by Polymarket.
     """
 
-    def __init__(self, url="wss://ws-live-data.polymarket.com"):
+    def __init__(self, url="wss://ws-live-data.polymarket.com", kafka_bootstrap_servers=None, kafka_topic="polymarket-messages"):
         """
         Initializes the PolymarketRTDSClient.
 
         Args:
             url (str): The WebSocket URL for the Polymarket RTDS.
+            kafka_bootstrap_servers (str or list): Kafka bootstrap servers (e.g., 'localhost:9092' or ['broker1:9092', 'broker2:9092'])
+            kafka_topic (str): Kafka topic to publish messages to
         """
         self.url = url
         self.ws = None
@@ -28,31 +37,85 @@ class PolymarketRTDSClient:
         self.clob_auth = None
         self.gamma_auth = None
 
+        # Kafka configuration
+        self.kafka_topic = kafka_topic
+        self.kafka_producer = None
+        if kafka_bootstrap_servers:
+            self._init_kafka_producer(kafka_bootstrap_servers)
+
+    def _init_kafka_producer(self, bootstrap_servers):
+        """Initialize Kafka producer with error handling."""
+        try:
+            self.kafka_producer = KafkaProducer(
+                bootstrap_servers=bootstrap_servers,
+                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                key_serializer=lambda k: k.encode('utf-8') if k else None,
+                acks='all',  # Wait for all replicas to acknowledge
+                retries=3,
+                max_in_flight_requests_per_connection=1
+            )
+            logger.info(f"Kafka producer initialized with bootstrap servers: {bootstrap_servers}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Kafka producer: {e}")
+            raise
+
+    def _send_to_kafka(self, data):
+        """Send message to Kafka."""
+        logger.info(f"Start sending message to Kafka topic '{self.kafka_topic}': {data}")
+        if self.kafka_producer is None:
+            logger.warning("Kafka producer not initialized. Message not sent to Kafka.")
+            return
+
+        try:
+            logger.info(f"Sending message to Kafka topic '{self.kafka_topic}': {data}")
+            # Extract topic from message if available, otherwise use default
+            message_topic = data.get('topic', 'unknown')
+            key = f"{message_topic}:{data.get('type', 'unknown')}"
+            
+            # Send message to Kafka
+            future = self.kafka_producer.send(
+                self.kafka_topic,
+                key=key,
+                value=data
+            )
+            
+            # Optional: Wait for confirmation (can make this async if needed)
+            future.get(timeout=10)
+            logger.info(f"_---------___Message sent to Kafka topic '{self.kafka_topic}' with key '{key}'")
+        except KafkaError as e:
+            logger.error(f"Failed to send message to Kafka: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error sending to Kafka: {e}")
+
     def _on_message(self, ws, message):
         """Callback function to handle incoming messages."""
         try:
             data = json.loads(message)
-            print(f"Received message: {data}")
+            logger.info(f"Received message: {data}")
+            
+            # Send to Kafka
+            self._send_to_kafka(data)
+            
         except json.JSONDecodeError:
-            print(f"Received non-JSON message: {message}")
+            logger.warning(f"Received non-JSON message: {message}")
 
     def _on_error(self, ws, error):
         """Callback function to handle errors."""
-        print(f"Error: {error}")
+        logger.error(f"WebSocket error: {error}")
 
     def _on_close(self, ws, close_status_code, close_msg):
         """Callback function to handle connection closure."""
-        print("### Connection closed ###")
+        logger.info(f"WebSocket connection closed (status: {close_status_code}, msg: {close_msg})")
         self.is_running = False
 
     def _on_open(self, ws):
         """Callback function when the connection is opened."""
-        print("### Connection opened ###")
+        logger.info("WebSocket connection opened")
         self.connected.set()
 
     def connect(self):
         """Establishes a WebSocket connection."""
-        print("Connecting to Polymarket RTDS...")
+        logger.info("Connecting to Polymarket RTDS...")
         self.ws = websocket.WebSocketApp(
             self.url,
             on_open=self._on_open,
@@ -125,7 +188,7 @@ class PolymarketRTDSClient:
             "subscriptions": [subscription]
         }
         self.ws.send(json.dumps(message))
-        print(f"Subscribed to {topic}:{message_type}")
+        logger.info(f"Subscribed to {topic}:{message_type}")
 
     def unsubscribe(self, topic, message_type, filters=None):
         """
@@ -151,16 +214,22 @@ class PolymarketRTDSClient:
             "subscriptions": [subscription]
         }
         self.ws.send(json.dumps(message))
-        print(f"Unsubscribed from {topic}:{message_type}")
+        logger.info(f"Unsubscribed from {topic}:{message_type}")
 
     def close(self):
-        """Closes the WebSocket connection."""
+        """Closes the WebSocket connection and Kafka producer."""
         if self.is_running:
             self.is_running = False
             self.ws.close()
             if self.ws_thread:
                 self.ws_thread.join()
-            print("Connection closed.")
+            logger.info("WebSocket connection closed.")
+        
+        # Close Kafka producer
+        if self.kafka_producer:
+            self.kafka_producer.flush()
+            self.kafka_producer.close()
+            logger.info("Kafka producer closed.")
 
 import signal
 import os
@@ -168,8 +237,15 @@ import os
 if __name__ == '__main__':
     # --- Example Usage ---
 
-    # Create a client instance
-    client = PolymarketRTDSClient()
+    # Get Kafka configuration from environment variables
+    kafka_servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka-service:9092")
+    kafka_topic = os.environ.get("KAFKA_TOPIC", "polymarket-messages")
+
+    # Create a client instance with Kafka
+    client = PolymarketRTDSClient(
+        kafka_bootstrap_servers=kafka_servers,
+        kafka_topic=kafka_topic
+    )
 
     # (Optional) Set CLOB Authentication
     # client.set_clob_authentication(
@@ -179,7 +255,7 @@ if __name__ == '__main__':
     # )
 
     # (Optional) Set Gamma Authentication
-    # client.set_gamma_authentication(wallet_address="YOUR_WALLET_ADDRESS")
+    # client.set_gamma_authentication(wallet_address=os.environ.get("WALLET_ADDRESS"))
 
     # Connect to the RTDS
     client.connect()
@@ -190,10 +266,9 @@ if __name__ == '__main__':
 
     def shutdown_handler(signum, frame):
         """Handles graceful shutdown on receiving SIGINT or SIGTERM."""
-        print(f"Received signal {signum}. Shutting down gracefully...")
+        logger.info(f"Received signal {signum}. Shutting down gracefully...")
         # The unsubscribe calls are not strictly necessary if the connection is closing,
         # but it's good practice to be explicit.
-        # client.unsubscribe(topic="crypto_prices", message_type="update")
         client.unsubscribe(topic="comments", message_type="comment_created")
         client.unsubscribe(topic="comments", message_type="reaction_created")
         client.close()
@@ -202,9 +277,9 @@ if __name__ == '__main__':
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
-    print("Application started. Waiting for termination signal...")
+    logger.info("Application started. Waiting for termination signal...")
     # Keep the main thread alive to receive messages
     while client.is_running:
         time.sleep(1)
     
-    print("Application has shut down.")
+    logger.info("Application has shut down.")

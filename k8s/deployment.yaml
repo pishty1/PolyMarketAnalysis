@@ -17,7 +17,7 @@ spec:
       containers:
         - name: polymarket-client
           image: polymarket-client:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: polymarket-client-config
