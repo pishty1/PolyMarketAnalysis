@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polymarket-client-config
+data:
+  POLYMARKET_API_KEY: ""
+  POLYMARKET_API_SECRET: ""
+  POLYMARKET_PASSPHRASE: ""
+  WALLET_ADDRESS: ""
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: polymarket-client-auth
+stringData:
+  POLYMARKET_API_KEY: ""
+  POLYMARKET_API_SECRET: ""
+  POLYMARKET_PASSPHRASE: ""
