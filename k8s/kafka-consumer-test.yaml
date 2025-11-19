@@ -26,6 +26,8 @@ spec:
           kafka-console-consumer --bootstrap-server kafka-service:9092 \
             --topic polymarket-messages \
             --from-beginning \
+            --consumer-property security.protocol=PLAINTEXT \
+            --consumer-property listener.name=EXTERNAL \
             --property print.key=true \
             --property print.timestamp=true
       env:

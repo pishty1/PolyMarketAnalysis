@@ -61,13 +61,11 @@ class PolymarketRTDSClient:
 
     def _send_to_kafka(self, data):
         """Send message to Kafka."""
-        logger.info(f"Start sending message to Kafka topic '{self.kafka_topic}': {data}")
         if self.kafka_producer is None:
             logger.warning("Kafka producer not initialized. Message not sent to Kafka.")
             return
 
         try:
-            logger.info(f"Sending message to Kafka topic '{self.kafka_topic}': {data}")
             # Extract topic from message if available, otherwise use default
             message_topic = data.get('topic', 'unknown')
             key = f"{message_topic}:{data.get('type', 'unknown')}"
@@ -80,8 +78,9 @@ class PolymarketRTDSClient:
             )
             
             # Optional: Wait for confirmation (can make this async if needed)
-            future.get(timeout=10)
-            logger.info(f"_---------___Message sent to Kafka topic '{self.kafka_topic}' with key '{key}'")
+            future.get(timeout=3)
+            logger.info(f"___Message sent to Kafka topic '{self.kafka_topic}' with key '{key}'")
+            logger.info(f"_____________________________________________________________________________")
         except KafkaError as e:
             logger.error(f"Failed to send message to Kafka: {e}")
         except Exception as e:
@@ -238,7 +237,7 @@ if __name__ == '__main__':
     # --- Example Usage ---
 
     # Get Kafka configuration from environment variables
-    kafka_servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka-service:9092")
+    kafka_servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9094")
     kafka_topic = os.environ.get("KAFKA_TOPIC", "polymarket-messages")
 
     # Create a client instance with Kafka
@@ -262,7 +261,7 @@ if __name__ == '__main__':
 
     # Subscribe to comments
     client.subscribe(topic="comments", message_type="comment_created")
-    client.subscribe(topic="comments", message_type="reaction_created")
+    # client.subscribe(topic="comments", message_type="reaction_created")
 
     def shutdown_handler(signum, frame):
         """Handles graceful shutdown on receiving SIGINT or SIGTERM."""
@@ -270,7 +269,7 @@ if __name__ == '__main__':
         # The unsubscribe calls are not strictly necessary if the connection is closing,
         # but it's good practice to be explicit.
         client.unsubscribe(topic="comments", message_type="comment_created")
-        client.unsubscribe(topic="comments", message_type="reaction_created")
+        # client.unsubscribe(topic="comments", message_type="reaction_created")
         client.close()
 
     # Register the shutdown handler for SIGINT (Ctrl+C) and SIGTERM
