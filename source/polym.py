@@ -88,10 +88,6 @@ class PolymarketRTDSClient:
                 callback=delivery_report
             )
             
-            # Wait for any outstanding messages to be delivered and delivery report
-            # callbacks to be triggered.
-            self.kafka_producer.flush(timeout=3.0)
-            
         except Exception as e:
             logger.error(f"Unexpected error sending to Kafka: {e}")
 
