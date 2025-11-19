@@ -2,8 +2,7 @@ import websocket
 import json
 import threading
 import time
-from kafka import KafkaProducer
-from kafka.errors import KafkaError
+from confluent_kafka import Producer, KafkaError
 import logging
 
 # Configure logging
@@ -46,14 +45,14 @@ class PolymarketRTDSClient:
     def _init_kafka_producer(self, bootstrap_servers):
         """Initialize Kafka producer with error handling."""
         try:
-            self.kafka_producer = KafkaProducer(
-                bootstrap_servers=bootstrap_servers,
-                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-                key_serializer=lambda k: k.encode('utf-8') if k else None,
-                acks='all',  # Wait for all replicas to acknowledge
-                retries=3,
-                max_in_flight_requests_per_connection=1
-            )
+            conf = {
+                'bootstrap.servers': bootstrap_servers,
+                'client.id': 'polymarket-client',
+                'acks': 'all',
+                'retries': 3,
+                'max.in.flight': 1
+            }
+            self.kafka_producer = Producer(conf)
             logger.info(f"Kafka producer initialized with bootstrap servers: {bootstrap_servers}")
         except Exception as e:
             logger.error(f"Failed to initialize Kafka producer: {e}")
@@ -65,24 +64,34 @@ class PolymarketRTDSClient:
             logger.warning("Kafka producer not initialized. Message not sent to Kafka.")
             return
 
+        def delivery_report(err, msg):
+            """Called once for each message produced to indicate delivery result."""
+            if err is not None:
+                logger.error(f"Message delivery failed: {err}")
+            else:
+                logger.info(f"___Message sent to Kafka topic '{msg.topic()}' with key '{msg.key().decode('utf-8')}'")
+                logger.info(f"_____________________________________________________________________________")
+
         try:
             # Extract topic from message if available, otherwise use default
             message_topic = data.get('topic', 'unknown')
             key = f"{message_topic}:{data.get('type', 'unknown')}"
             
             # Send message to Kafka
-            future = self.kafka_producer.send(
+            # Trigger any available delivery report callbacks from previous produce() calls
+            self.kafka_producer.poll(0)
+
+            self.kafka_producer.produce(
                 self.kafka_topic,
-                key=key,
-                value=data
+                key=key.encode('utf-8'),
+                value=json.dumps(data).encode('utf-8'),
+                callback=delivery_report
             )
             
-            # Optional: Wait for confirmation (can make this async if needed)
-            future.get(timeout=3)
-            logger.info(f"___Message sent to Kafka topic '{self.kafka_topic}' with key '{key}'")
-            logger.info(f"_____________________________________________________________________________")
-        except KafkaError as e:
-            logger.error(f"Failed to send message to Kafka: {e}")
+            # Wait for any outstanding messages to be delivered and delivery report
+            # callbacks to be triggered.
+            self.kafka_producer.flush(timeout=3.0)
+            
         except Exception as e:
             logger.error(f"Unexpected error sending to Kafka: {e}")
 
@@ -227,8 +236,7 @@ class PolymarketRTDSClient:
         # Close Kafka producer
         if self.kafka_producer:
             self.kafka_producer.flush()
-            self.kafka_producer.close()
-            logger.info("Kafka producer closed.")
+            logger.info("Kafka producer flushed.")
 
 import signal
 import os
