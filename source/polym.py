@@ -91,9 +91,22 @@ class PolymarketRTDSClient:
         except Exception as e:
             logger.error(f"Unexpected error sending to Kafka: {e}")
 
+    def _on_pong(self, ws, message):
+        """Callback function to handle pong messages."""
+        try:
+            # Update heartbeat file
+            with open('/tmp/last_msg', 'w') as f:
+                f.write(str(time.time()))
+        except Exception as e:
+            logger.error(f"Failed to update heartbeat on pong: {e}")
+
     def _on_message(self, ws, message):
         """Callback function to handle incoming messages."""
         try:
+            # Update heartbeat file
+            with open('/tmp/last_msg', 'w') as f:
+                f.write(str(time.time()))
+
             data = json.loads(message)
             logger.info(f"Received message: {data}")
             
@@ -125,7 +138,8 @@ class PolymarketRTDSClient:
             on_open=self._on_open,
             on_message=self._on_message,
             on_error=self._on_error,
-            on_close=self._on_close
+            on_close=self._on_close,
+            on_pong=self._on_pong
         )
         self.is_running = True
         self.connected.clear()

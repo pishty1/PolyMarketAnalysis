@@ -27,7 +27,7 @@ spec:
             --topic polymarket-messages \
             --from-beginning \
             --consumer-property security.protocol=PLAINTEXT \
-            --consumer-property listener.name=EXTERNAL \
+            --consumer-property listener.name=INTERNAL \
             --property print.key=true \
             --property print.timestamp=true
       env:
