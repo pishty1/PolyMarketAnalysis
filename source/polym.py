@@ -31,6 +31,7 @@ class PolymarketRTDSClient:
         self.ws_thread = None
         self.is_running = False
         self.connected = threading.Event()
+        self.subscriptions = []
 
         # Authentication credentials
         self.clob_auth = None
@@ -123,34 +124,57 @@ class PolymarketRTDSClient:
     def _on_close(self, ws, close_status_code, close_msg):
         """Callback function to handle connection closure."""
         logger.info(f"WebSocket connection closed (status: {close_status_code}, msg: {close_msg})")
-        self.is_running = False
+        self.connected.clear()
 
     def _on_open(self, ws):
         """Callback function when the connection is opened."""
         logger.info("WebSocket connection opened")
         self.connected.set()
+        
+        # Resubscribe to existing subscriptions
+        for sub in self.subscriptions:
+            message = {
+                "action": "subscribe",
+                "subscriptions": [sub]
+            }
+            try:
+                self.ws.send(json.dumps(message))
+                logger.info(f"Resubscribed to {sub.get('topic')}:{sub.get('type')}")
+            except Exception as e:
+                logger.error(f"Failed to resubscribe: {e}")
+
+    def _run_forever_loop(self):
+        while self.is_running:
+            try:
+                self.ws = websocket.WebSocketApp(
+                    self.url,
+                    on_open=self._on_open,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                    on_close=self._on_close,
+                    on_pong=self._on_pong
+                )
+                self.ws.run_forever(ping_interval=5)
+            except Exception as e:
+                logger.error(f"WebSocket run_forever error: {e}")
+            
+            if self.is_running:
+                logger.info("Connection lost. Reconnecting in 5 seconds...")
+                time.sleep(5)
 
     def connect(self):
         """Establishes a WebSocket connection."""
         logger.info("Connecting to Polymarket RTDS...")
-        self.ws = websocket.WebSocketApp(
-            self.url,
-            on_open=self._on_open,
-            on_message=self._on_message,
-            on_error=self._on_error,
-            on_close=self._on_close,
-            on_pong=self._on_pong
-        )
         self.is_running = True
         self.connected.clear()
-        # Use ping_interval to automatically send ping frames every 5 seconds
-        self.ws_thread = threading.Thread(target=self.ws.run_forever, kwargs={"ping_interval": 5})
+        
+        self.ws_thread = threading.Thread(target=self._run_forever_loop)
         self.ws_thread.daemon = True
         self.ws_thread.start()
         
         # Wait for connection to be established (timeout after 10 seconds)
         if not self.connected.wait(timeout=10):
-            raise ConnectionError("Failed to establish WebSocket connection within 10 seconds")
+            logger.warning("Initial connection timed out, but will keep trying in background.")
 
     def set_clob_authentication(self, api_key, api_secret, passphrase):
         """
@@ -185,9 +209,6 @@ class PolymarketRTDSClient:
             message_type (str): The message type/event (e.g., "update").
             filters (str, optional): An optional filter string. Defaults to None.
         """
-        if not self.connected.is_set():
-            raise ConnectionError("WebSocket is not connected")
-        
         subscription = {
             "topic": topic,
             "type": message_type
@@ -201,12 +222,19 @@ class PolymarketRTDSClient:
         if self.gamma_auth:
             subscription["gamma_auth"] = self.gamma_auth
 
-        message = {
-            "action": "subscribe",
-            "subscriptions": [subscription]
-        }
-        self.ws.send(json.dumps(message))
-        logger.info(f"Subscribed to {topic}:{message_type}")
+        # Store for reconnection
+        if subscription not in self.subscriptions:
+            self.subscriptions.append(subscription)
+
+        if self.connected.is_set():
+            message = {
+                "action": "subscribe",
+                "subscriptions": [subscription]
+            }
+            self.ws.send(json.dumps(message))
+            logger.info(f"Subscribed to {topic}:{message_type}")
+        else:
+            logger.info(f"Subscription queued for {topic}:{message_type}")
 
     def unsubscribe(self, topic, message_type, filters=None):
         """
@@ -217,22 +245,23 @@ class PolymarketRTDSClient:
             message_type (str): The message type/event.
             filters (str, optional): An optional filter string. Defaults to None.
         """
-        if not self.connected.is_set():
-            raise ConnectionError("WebSocket is not connected")
-        
-        subscription = {
-            "topic": topic,
-            "type": message_type
-        }
-        if filters:
-            subscription["filters"] = filters
+        # Remove from subscriptions list
+        self.subscriptions = [s for s in self.subscriptions if not (s['topic'] == topic and s['type'] == message_type)]
 
-        message = {
-            "action": "unsubscribe",
-            "subscriptions": [subscription]
-        }
-        self.ws.send(json.dumps(message))
-        logger.info(f"Unsubscribed from {topic}:{message_type}")
+        if self.connected.is_set():
+            subscription = {
+                "topic": topic,
+                "type": message_type
+            }
+            if filters:
+                subscription["filters"] = filters
+
+            message = {
+                "action": "unsubscribe",
+                "subscriptions": [subscription]
+            }
+            self.ws.send(json.dumps(message))
+            logger.info(f"Unsubscribed from {topic}:{message_type}")
 
     def close(self):
         """Closes the WebSocket connection and Kafka producer."""
