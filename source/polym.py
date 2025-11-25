@@ -33,10 +33,6 @@ class PolymarketRTDSClient:
         self.connected = threading.Event()
         self.subscriptions = []
 
-        # Authentication credentials
-        self.clob_auth = None
-        self.gamma_auth = None
-
         # Kafka configuration
         self.kafka_topic = kafka_topic
         self.kafka_producer = None
@@ -176,30 +172,6 @@ class PolymarketRTDSClient:
         if not self.connected.wait(timeout=10):
             logger.warning("Initial connection timed out, but will keep trying in background.")
 
-    def set_clob_authentication(self, api_key, api_secret, passphrase):
-        """
-        Sets the CLOB authentication credentials.
-
-        Args:
-            api_key (str): Your Polymarket API key.
-            api_secret (str): Your Polymarket API secret.
-            passphrase (str): Your Polymarket API passphrase.
-        """
-        self.clob_auth = {
-            "key": api_key,
-            "secret": api_secret,
-            "passphrase": passphrase
-        }
-
-    def set_gamma_authentication(self, wallet_address):
-        """
-        Sets the Gamma authentication credentials.
-
-        Args:
-            wallet_address (str): Your wallet address.
-        """
-        self.gamma_auth = {"address": wallet_address}
-
     def subscribe(self, topic, message_type, filters=None):
         """
         Subscribes to a data stream.
@@ -215,12 +187,6 @@ class PolymarketRTDSClient:
         }
         if filters:
             subscription["filters"] = filters
-
-        # Add authentication if set
-        if self.clob_auth:
-            subscription["clob_auth"] = self.clob_auth
-        if self.gamma_auth:
-            subscription["gamma_auth"] = self.gamma_auth
 
         # Store for reconnection
         if subscription not in self.subscriptions:
@@ -292,16 +258,6 @@ if __name__ == '__main__':
         kafka_bootstrap_servers=kafka_servers,
         kafka_topic=kafka_topic
     )
-
-    # (Optional) Set CLOB Authentication
-    # client.set_clob_authentication(
-    #     api_key=os.environ.get("POLYMARKET_API_KEY"),
-    #     api_secret=os.environ.get("POLYMARKET_API_SECRET"),
-    #     passphrase=os.environ.get("POLYMARKET_PASSPHRASE")
-    # )
-
-    # (Optional) Set Gamma Authentication
-    # client.set_gamma_authentication(wallet_address=os.environ.get("WALLET_ADDRESS"))
 
     # Connect to the RTDS
     client.connect()
