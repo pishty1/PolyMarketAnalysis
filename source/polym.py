@@ -32,12 +32,16 @@ class PolymarketRTDSClient:
         self.is_running = False
         self.connected = threading.Event()
         self.subscriptions = []
+        self.last_disk_write_time = 0
 
         # Kafka configuration
         self.kafka_topic = kafka_topic
         self.kafka_producer = None
         if kafka_bootstrap_servers:
             self._init_kafka_producer(kafka_bootstrap_servers)
+
+        # Initialize heartbeat immediately to prevent startup race condition
+        self._update_heartbeat()
 
     def _init_kafka_producer(self, bootstrap_servers):
         """Initialize Kafka producer with error handling."""
@@ -88,21 +92,25 @@ class PolymarketRTDSClient:
         except Exception as e:
             logger.error(f"Unexpected error sending to Kafka: {e}")
 
+    def _update_heartbeat(self):
+        """Updates the heartbeat file at most every 5 seconds."""
+        current_time = time.time()
+        if current_time - self.last_disk_write_time >= 5:
+            try:
+                with open('/tmp/last_msg', 'w') as f:
+                    f.write(str(current_time))
+                self.last_disk_write_time = current_time
+            except Exception as e:
+                logger.error(f"Failed to update heartbeat: {e}")
+
     def _on_pong(self, ws, message):
         """Callback function to handle pong messages."""
-        try:
-            # Update heartbeat file
-            with open('/tmp/last_msg', 'w') as f:
-                f.write(str(time.time()))
-        except Exception as e:
-            logger.error(f"Failed to update heartbeat on pong: {e}")
+        self._update_heartbeat()
 
     def _on_message(self, ws, message):
         """Callback function to handle incoming messages."""
         try:
-            # Update heartbeat file
-            with open('/tmp/last_msg', 'w') as f:
-                f.write(str(time.time()))
+            self._update_heartbeat()
 
             data = json.loads(message)
             logger.info(f"Received message: {data}")
