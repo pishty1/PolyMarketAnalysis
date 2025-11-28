@@ -51,11 +51,16 @@ public class Polymarket {
                         .setValueOnlyDeserializer(new SimpleStringSchema())
                         .build();
 
-        // 2. Create Stream
-        DataStream<String> stream =
-                env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
+        // 2. Define Watermark Strategy
+        WatermarkStrategy<String> watermarkStrategy = WatermarkStrategy
+                .<String>forBoundedOutOfOrderness(Duration.ofSeconds(20))
+                .withTimestampAssigner((event, timestamp) -> extractTimestamp(event));
 
-        // 3. Process Data (Parse JSON -> Extract ID & Timestamp -> Count)
+        // 3. Create Stream
+        DataStream<String> stream =
+                env.fromSource(source, watermarkStrategy, "Kafka Source");
+
+        // 4. Process Data (Parse JSON -> Extract ID & Timestamp -> Count)
         stream.map(Polymarket::parseJsonToTuple)
                 // We need to tell Flink the types because of Java Type Erasure hello
 
@@ -64,10 +69,6 @@ public class Polymarket {
                                 org.apache.flink.api.common.typeinfo.Types.LONG,
                                 org.apache.flink.api.common.typeinfo.Types.LONG,
                                 org.apache.flink.api.common.typeinfo.Types.INT))
-                .assignTimestampsAndWatermarks(
-                        WatermarkStrategy.<Tuple3<Long, Long, Integer>>forBoundedOutOfOrderness(
-                                        Duration.ofSeconds(20))
-                                .withTimestampAssigner((event, timestamp) -> event.f1))
                 .keyBy(value -> value.f0)
                 // 5. Window (10 minutes event time)
                 .window(TumblingEventTimeWindows.of(Duration.ofMinutes(10)))
@@ -78,6 +79,20 @@ public class Polymarket {
                 // 7. Output to console (Check TaskManager logs to see this)
                 .print();
         env.execute("Polymarket Comments Analysis");
+    }
+
+    public static long extractTimestamp(String jsonString) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode node = mapper.readTree(jsonString);
+            if (node.has("timestamp")) {
+                return node.get("timestamp").asLong();
+            }
+        } catch (Exception e) {
+            // Fallback or log error
+                e.printStackTrace();
+        }
+        return 0L;
     }
 
     public static Tuple3<Long, Long, Integer> parseJsonToTuple(String jsonString) throws Exception {
@@ -99,6 +114,6 @@ public class Polymarket {
                 DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
         String formattedTime = formatter.format(Instant.ofEpochMilli(tuple.f1));
         return String.format(
-                "___ParentEntityID: %d, Time: %s, Count: %d", tuple.f0, formattedTime, tuple.f2);
+                "+++ParentEntityID: %d, Time: %s, Count: %d", tuple.f0, formattedTime, tuple.f2);
     }
 }
