@@ -1,155 +1,91 @@
-# Polymarket Client with Kafka and Kubernetes
+# Polymarket Real-Time Analytics Pipeline
 
-This project contains a Python client that subscribes to Polymarket's real-time data streams and pushes events to a Kafka topic. The entire stack is designed to be deployed and tested on Kubernetes.
+This project implements a real-time data pipeline for Polymarket, consisting of a Python ingestion client, a Kafka message broker, and a Flink analytics engine running on Kubernetes.
+
+## Architecture
+
+1.  **Ingestion Producer**: A Python application that subscribes to Polymarket's WebSocket API and pushes market events to Kafka.
+2.  **Kafka**: Acts as the message broker buffering events.
+3.  **Flink Analytics**: A Java-based Flink job that consumes events from Kafka, performs real-time aggregation/analytics.
+4.  **Infrastructure**: The entire stack runs on Kubernetes, managed via Helm charts and K8s manifests. Includes Prometheus/Grafana for monitoring and Postgres for storage.
 
 ## Project Structure
 
-- `source/`: Contains the Python application source code and its Dockerfile.
-- `k8s/`: Contains all Kubernetes manifests for deployment.
-  - `kafka.yaml`: Deploys a single-node Kafka broker using KRaft mode.
-  - `config.yaml`: Defines the `ConfigMap` and `Secret` for the application.
-  - `deployment.yaml`: Deploys the Polymarket client application.
-  - `kafka-consumer-test.yaml`: Deploys a test pod to consume messages from Kafka.
+- `apps/`
+    - `ingestion-producer/`: Python client for fetching Polymarket data.
+    - `flink-analytics/`: Flink Java application for processing data streams.
+- `infrastructure/`
+    - `helm/`: Values files for Helm charts (Kafka, Postgres, Prometheus).
+    - `k8s/`: Kubernetes manifests for deployments, services, and the Flink Operator.
+    - `scripts/`: Helper scripts for bootstrapping and building.
+- `Makefile`: Entry point for common development tasks.
 
 ## Prerequisites
 
-- [Docker](https://www.docker.com/get-started)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
-- A running Kubernetes cluster (e.g., [Minikube](https://minikube.sigs.k8s.io/docs/start/), [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/), Docker Desktop).
+- [Docker](https://www.docker.com/)
+- [Minikube](https://minikube.sigs.k8s.io/docs/start/)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [Helm](https://helm.sh/)
+- [Java JDK 11+](https://adoptium.net/) (for building Flink jobs)
+- [Maven](https://maven.apache.org/) (for building Flink jobs)
 
----
+## Quick Start
 
-## End-to-End Testing Guide
+The project includes a `Makefile` to streamline the setup, build, and deployment process.
 
-This guide walks through building the client, deploying the full stack (Kafka and the client), and verifying that messages are being processed correctly.
+### 1. Setup Cluster
+Initialize Minikube and install infrastructure dependencies (Cert Manager, Flink Operator, Kafka, Postgres, Prometheus).
 
-### Step 1: Build the Docker Image
-
-From the project root (`app/`):
-```sh
-docker build -t polymarket-client:latest ./source
+```bash
+make setup
 ```
 
-### Step 2: Load Image Into Your Kubernetes Cluster
+### 2. Build Images
+Build the Docker images for the Ingestion Producer and Flink Analytics job. This script automatically points to Minikube's Docker daemon.
 
-This step is required for local clusters like Minikube or Kind to make the local Docker image available.
-
-```sh
-# For Docker Desktop Kubernetes (no action needed)
-
-# For Minikube
-minikube image load polymarket-client:latest
-
-# For Kind
-kind load docker-image polymarket-client:latest
+```bash
+make build
 ```
 
-### Step 3: Deploy Kafka and Application
+### 3. Deploy Applications
+Deploy the custom applications (Producer and Flink Job) to the cluster.
 
-Deploy Kafka, the application configuration, and the client deployment itself.
-
-```sh
-# Navigate to the project root
-cd /Users/pishty/ws/polymarket/app
-
-# 1. Deploy Kafka and wait for it to be ready
-kubectl apply -f k8s/kafka.yaml
-echo "Waiting for Kafka to be ready..."
-kubectl wait --for=condition=ready pod -l app=kafka --timeout=120s
-
-# 2. Deploy the ConfigMap/Secret and the Polymarket client
-kubectl apply -f k8s/config.yaml
-kubectl apply -f k8s/deployment.yaml
+```bash
+make deploy
 ```
 
-### Step 4: Verify the Deployment
+## Monitoring & Access
 
-Check that the pods are running and inspect the client logs to ensure it's connected.
+### Port Forwarding
+To access the Flink Dashboard or other services locally:
 
-```sh
-# Check that all pods are running
-kubectl get pods
-
-# You should see kafka-0 and polymarket-client-* pods in 'Running' state
-
-# Stream the Polymarket client logs
-kubectl logs -f deployment/polymarket-client
+```bash
+make port-forward
 ```
-You should see log output indicating a successful WebSocket connection and Kafka initialization.
+*   **Flink Dashboard**: http://localhost:8081
 
-### Step 5: Test the Kafka Consumer
-
-Deploy a test consumer pod that will listen to the `polymarket-messages` topic and print its contents.
-
-```sh
-# Deploy the test consumer
-kubectl apply -f k8s/kafka-consumer-test.yaml
-
-# View the messages being consumed from the topic
-kubectl logs -f kafka-consumer-test
+### Logs
+Check the logs of the ingestion producer:
+```bash
+kubectl logs -f -l app=ingestion-producer
 ```
-This will show all messages being pushed to the `polymarket-messages` topic in real-time.
 
----
+Check the logs of the Flink TaskManager:
+```bash
+kubectl logs -f -l component=taskmanager
+```
 
-## Development Workflow: Redeploying Code
+## Development
 
-After making changes to `source/polym.py`, follow these steps to redeploy:
+### Modifying the Flink Job
+1.  Edit code in `apps/flink-analytics/jobs/poly/src/`.
+2.  Run `make build` to rebuild the JAR and Docker image.
+3.  Run `make deploy` to update the deployment.
 
-1.  **Rebuild the Docker image:**
-    ```sh
-    docker build -t polymarket-client:latest ./source
+### Modifying the Ingestion Producer
+1.  Edit code in `apps/ingestion-producer/`.
+2.  Run `make build` to rebuild the Docker image.
+3.  Restart the deployment:
+    ```bash
+    kubectl rollout restart deployment/ingestion-producer
     ```
-
-2.  **Load the new image** (if using Minikube/Kind, see Step 2 above).
-
-3.  **Restart the deployment** to force Kubernetes to pull the new image:
-    ```sh
-    kubectl rollout restart deployment/polymarket-client
-    ```
-
-4.  **Monitor the rollout:**
-    ```sh
-    kubectl rollout status deployment/polymarket-client
-    ```
-
----
-
-## Cleanup
-
-To remove all the Kubernetes resources created by this guide, run:
-```sh
-kubectl delete -f k8s/deployment.yaml
-kubectl delete -f k8s/config.yaml
-kubectl delete -f k8s/kafka.yaml
-kubectl delete -f k8s/kafka-consumer-test.yaml
-```
-
----
-
-## Useful Kubernetes Commands
-
-- **View all pods:** `kubectl get pods`
-- **View all services:** `kubectl get services`
-- **View logs for Polymarket client:** `kubectl logs -f deployment/polymarket-client`
-- **View logs for Kafka:** `kubectl logs -f kafka-0`
-- **View logs for consumer test:** `kubectl logs -f kafka-consumer-test`
-- **Restart the Polymarket client:** `kubectl rollout restart deployment/polymarket-client`
-- **Execute a shell in the Kafka pod:** `kubectl exec -it kafka-0 -- bash`
-- **List Kafka topics (from inside the cluster):**
-  ```sh
-  kubectl exec kafka-0 -- kafka-topics --list --bootstrap-server localhost:9092
-  ```
-- **Describe a topic:**
-  ```sh
-  kubectl exec kafka-0 -- kafka-topics --describe --topic polymarket-messages --bootstrap-server localhost:9092
-  ```
-- **Manually consume messages from a topic:**
-  ```sh
-  kubectl exec -it kafka-0 -- kafka-console-consumer \
-    --bootstrap-server localhost:9092 \
-    --topic polymarket-messages \
-    --from-beginning
-  ```
-- **Check pod status and events:** `kubectl describe pod <pod-name>`
-- **View all resources:** `kubectl get all`

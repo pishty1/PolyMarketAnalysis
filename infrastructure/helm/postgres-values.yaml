@@ -1,0 +1,26 @@
+# Minikube-optimized values for Bitnami Postgres
+image:
+  tag: latest
+
+architecture: standalone
+auth:
+  username: postgres
+  password: postgres
+  database: polymarket
+primary:
+  persistence:
+    enabled: false
+  resources:
+    limits:
+      memory: 256Mi
+    requests:
+      memory: 128Mi
+  initdb:
+    scripts:
+      init.sql: |
+        CREATE TABLE IF NOT EXISTS market_stats (
+            parent_entity_id VARCHAR(255),
+            window_timestamp TIMESTAMP,
+            count INT,
+            PRIMARY KEY (parent_entity_id, window_timestamp)
+        );

@@ -1,0 +1,85 @@
+Name:             poly-example-68c8444749-z89jc
+Namespace:        default
+Priority:         0
+Service Account:  flink
+Node:             minikube/192.168.49.2
+Start Time:       Fri, 28 Nov 2025 23:01:44 +0000
+Labels:           app=poly-example
+                  component=jobmanager
+                  pod-template-hash=68c8444749
+                  type=flink-native-kubernetes
+Annotations:      flinkdeployment.flink.apache.org/generation: 2
+Status:           Running
+IP:               10.244.0.48
+IPs:
+  IP:           10.244.0.48
+Controlled By:  ReplicaSet/poly-example-68c8444749
+Containers:
+  flink-main-container:
+    Container ID:  docker://9d948b426dfe5c2c7413a453afb9afdb34df9c583c561d7610650df865cb42c5
+    Image:         flink-analytics:latest
+    Image ID:      docker://sha256:69f22f454d34729b5d1b29ba301e8da8bbeeb58e2106f622025397dcb6e958df
+    Ports:         8081/TCP (rest), 6123/TCP (jobmanager-rpc), 6124/TCP (blobserver)
+    Host Ports:    0/TCP (rest), 0/TCP (jobmanager-rpc), 0/TCP (blobserver)
+    Command:
+      /docker-entrypoint.sh
+    Args:
+      bash
+      -c
+      kubernetes-jobmanager.sh kubernetes-application 
+    State:          Running
+      Started:      Fri, 28 Nov 2025 23:01:45 +0000
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     1
+      memory:  2Gi
+    Requests:
+      cpu:     1
+      memory:  2Gi
+    Startup:   http-get http://:rest/config delay=0s timeout=1s period=1s #success=1 #failure=2147483647
+    Environment:
+      _POD_IP_ADDRESS:   (v1:status.podIP)
+    Mounts:
+      /opt/flink/artifacts from user-artifacts-volume (rw)
+      /opt/flink/conf from flink-config-volume (rw)
+      /opt/flink/pod-template from pod-template-volume (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-rfd5r (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  user-artifacts-volume:
+    Type:       EmptyDir (a temporary directory that shares a pod's lifetime)
+    Medium:     
+    SizeLimit:  <unset>
+  flink-config-volume:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      flink-config-poly-example
+    Optional:  false
+  pod-template-volume:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      pod-template-poly-example
+    Optional:  false
+  kube-api-access-rfd5r:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    Optional:                false
+    DownwardAPI:             true
+QoS Class:                   Guaranteed
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason     Age                    From               Message
+  ----     ------     ----                   ----               -------
+  Normal   Scheduled  5m53s                  default-scheduler  Successfully assigned default/poly-example-68c8444749-z89jc to minikube
+  Normal   Pulled     5m52s                  kubelet            Container image "flink-analytics:latest" already present on machine
+  Normal   Created    5m52s                  kubelet            Created container: flink-main-container
+  Normal   Started    5m52s                  kubelet            Started container flink-main-container
+  Warning  Unhealthy  5m47s (x5 over 5m51s)  kubelet            Startup probe failed: Get "http://10.244.0.48:8081/config": dial tcp 10.244.0.48:8081: connect: connection refused

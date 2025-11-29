@@ -1,0 +1,26 @@
+# Minikube-optimized values for Bitnami Kafka
+persistence:
+  enabled: false
+zookeeper:
+  enabled: false
+  persistence:
+    enabled: false
+resources:
+  limits:
+    memory: 768Mi
+  requests:
+    memory: 512Mi
+logPersistence:
+  enabled: false
+
+# Fix for Bitnami image availability (post-Aug 2025)
+image:
+  tag: latest
+
+defaultInitContainers:
+  volumePermissions:
+    image:
+      tag: latest
+  autoDiscovery:
+    image:
+      tag: latest

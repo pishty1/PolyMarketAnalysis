@@ -21,7 +21,7 @@ kind: FlinkDeployment
 metadata:
   name: poly-example
 spec:
-  image: poly-example:latest
+  image: flink-analytics:latest
   imagePullPolicy: IfNotPresent
   flinkVersion: v1_20
   flinkConfiguration:

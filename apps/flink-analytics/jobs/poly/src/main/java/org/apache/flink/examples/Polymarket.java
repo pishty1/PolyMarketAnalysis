@@ -25,6 +25,9 @@ import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsIni
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
+import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
+import org.apache.flink.connector.jdbc.JdbcSink;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,8 +56,9 @@ public class Polymarket {
 
         // 2. Define Watermark Strategy
         WatermarkStrategy<String> watermarkStrategy = WatermarkStrategy
-                .<String>forBoundedOutOfOrderness(Duration.ofSeconds(20))
+                .<String>forBoundedOutOfOrderness(Duration.ofSeconds(10))
                 .withTimestampAssigner((event, timestamp) -> extractTimestamp(event));
+
 
         // 3. Create Stream
         DataStream<String> stream =
@@ -74,10 +78,25 @@ public class Polymarket {
                 .window(TumblingEventTimeWindows.of(Duration.ofMinutes(10)))
                 // 6. Sum the counts (field 2 of the tuple)
                 .sum(2)
-                // Format the output before printing
-                .map(Polymarket::formatResult)
-                // 7. Output to console (Check TaskManager logs to see this)
-                .print();
+                .addSink(JdbcSink.sink(
+                        "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?)",
+                        (statement, tuple) -> {
+                            statement.setString(1, String.valueOf(tuple.f0));
+                            statement.setTimestamp(2, new java.sql.Timestamp(tuple.f1));
+                            statement.setInt(3, tuple.f2);
+                        },
+                        JdbcExecutionOptions.builder()
+                                .withBatchSize(1000)
+                                .withBatchIntervalMs(200)
+                                .withMaxRetries(5)
+                                .build(),
+                        new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                                .withUrl("jdbc:postgresql://postgres-postgresql:5432/polymarket")
+                                .withDriverName("org.postgresql.Driver")
+                                .withUsername("postgres")
+                                .withPassword("postgres")
+                                .build()
+                ));
         env.execute("Polymarket Comments Analysis");
     }
 

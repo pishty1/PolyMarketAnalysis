@@ -1,0 +1,17 @@
+grafana:
+  adminPassword: admin
+  additionalDataSources:
+    - name: Postgres
+      type: postgres
+      url: postgres-postgresql:5432
+      database: polymarket
+      user: postgres
+      secureJsonData:
+        password: postgres
+      jsonData:
+        sslmode: "disable"
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
