@@ -18,67 +18,51 @@
 package org.apache.flink.examples;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.java.tuple.Tuple3;
-import org.apache.flink.connector.kafka.source.KafkaSource;
-import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
 import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
 import org.apache.flink.connector.jdbc.JdbcSink;
-
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.connector.kafka.source.KafkaSource;
+import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.examples.model.PolymarketEvent;
+import org.apache.flink.examples.serde.PolymarketEventDeserializer;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.util.Collector;
 
 import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 
-/** Main class for executing SQL scripts. */
+/** Main class for Polymarket comments analytics. */
 public class Polymarket {
 
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        // 1. Configure Kafka Source
-        // Note: "kafka-service:9092" is the internal K8s DNS you set up
-        KafkaSource<String> source =
-                KafkaSource.<String>builder()
-                        .setBootstrapServers("kafka-service:9092")
-                        .setTopics("polymarket-messages")
-                        .setGroupId("flink-analytics-group")
-                        .setStartingOffsets(OffsetsInitializer.latest())
-                        .setValueOnlyDeserializer(new SimpleStringSchema())
-                        .build();
+        // 1. Configure Kafka Source with typed deserializer
+        KafkaSource<PolymarketEvent> source = KafkaSource.<PolymarketEvent>builder()
+                .setBootstrapServers("kafka-service:9092")
+                .setTopics("polymarket-messages")
+                .setGroupId("flink-analytics-group")
+                .setStartingOffsets(OffsetsInitializer.latest())
+                .setValueOnlyDeserializer(new PolymarketEventDeserializer())
+                .build();
 
-        // 2. Define Watermark Strategy
-        WatermarkStrategy<String> watermarkStrategy = WatermarkStrategy
-                .<String>forBoundedOutOfOrderness(Duration.ofSeconds(10))
-                .withTimestampAssigner((event, timestamp) -> extractTimestamp(event));
-
+        // 2. Define Watermark Strategy using typed event timestamp
+        WatermarkStrategy<PolymarketEvent> watermarkStrategy = WatermarkStrategy
+                .<PolymarketEvent>forBoundedOutOfOrderness(Duration.ofSeconds(10))
+                .withTimestampAssigner((event, timestamp) -> event != null ? event.getTimestamp() : 0L);
 
         // 3. Create Stream
-        DataStream<String> stream =
-                env.fromSource(source, watermarkStrategy, "Kafka Source");
+        DataStream<PolymarketEvent> stream = env.fromSource(source, watermarkStrategy, "Kafka Source");
 
-        // 4. Process Data (Parse JSON -> Extract ID & Timestamp -> Count)
-        stream.map(Polymarket::parseJsonToTuple)
-                // We need to tell Flink the types because of Java Type Erasure hello
+        // 4. Filter out null events (malformed messages) and process
+        DataStream<Tuple3<Long, Long, Integer>> aggregatedStream = createAggregationPipeline(
+                stream.filter(event -> event != null));
 
-                .returns(
-                        org.apache.flink.api.common.typeinfo.Types.TUPLE(
-                                org.apache.flink.api.common.typeinfo.Types.LONG,
-                                org.apache.flink.api.common.typeinfo.Types.LONG,
-                                org.apache.flink.api.common.typeinfo.Types.INT))
-                .keyBy(value -> value.f0)
-                // 5. Window (10 minutes event time)
-                .window(TumblingEventTimeWindows.of(Duration.ofMinutes(10)))
-                // 6. Sum the counts (field 2 of the tuple)
-                .sum(2)
-                .addSink(JdbcSink.sink(
+        aggregatedStream.addSink(JdbcSink.sink(
                         "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?)",
                         (statement, tuple) -> {
                             statement.setString(1, String.valueOf(tuple.f0));
@@ -95,44 +79,40 @@ public class Polymarket {
                                 .withDriverName("org.postgresql.Driver")
                                 .withUsername("postgres")
                                 .withPassword("postgres")
-                                .build()
-                ));
+                                .build()));
         env.execute("Polymarket Comments Analysis");
     }
 
-    public static long extractTimestamp(String jsonString) {
-        try {
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode node = mapper.readTree(jsonString);
-            if (node.has("timestamp")) {
-                return node.get("timestamp").asLong();
+    public static DataStream<Tuple3<Long, Long, Integer>> createAggregationPipeline(DataStream<PolymarketEvent> stream) {
+        return stream
+                .keyBy(event -> event.getParentEntityID())
+                // Window (10 minutes event time)
+                .window(TumblingEventTimeWindows.of(Duration.ofMinutes(10)))
+                // Use ProcessWindowFunction to get window end timestamp
+                .process(new CountWithWindowTimestamp());
+    }
+
+    /**
+     * ProcessWindowFunction that counts elements and outputs the window's end timestamp.
+     */
+    public static class CountWithWindowTimestamp
+            extends ProcessWindowFunction<PolymarketEvent, Tuple3<Long, Long, Integer>, Long, TimeWindow> {
+
+        @Override
+        public void process(
+                Long key,
+                Context context,
+                Iterable<PolymarketEvent> elements,
+                Collector<Tuple3<Long, Long, Integer>> out) {
+
+            int count = 0;
+            for (PolymarketEvent element : elements) {
+                count++;
             }
-        } catch (Exception e) {
-            // Fallback or log error
-                e.printStackTrace();
-        }
-        return 0L;
-    }
 
-    public static Tuple3<Long, Long, Integer> parseJsonToTuple(String jsonString) throws Exception {
-        ObjectMapper mapper = new ObjectMapper();
-        JsonNode node = mapper.readTree(jsonString);
-        Long parentEntityID = 0L;
-        if (node.has("payload") && node.get("payload").has("parentEntityID")) {
-            parentEntityID = node.get("payload").get("parentEntityID").asLong();
+            // Use window end timestamp instead of message timestamp
+            long windowEnd = context.window().getEnd();
+            out.collect(Tuple3.of(key, windowEnd, count));
         }
-        Long timestamp = 0L;
-        if (node.has("timestamp")) {
-            timestamp = node.get("timestamp").asLong();
-        }
-        return Tuple3.of(parentEntityID, timestamp, 1);
-    }
-
-    private static String formatResult(Tuple3<Long, Long, Integer> tuple) {
-        DateTimeFormatter formatter =
-                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
-        String formattedTime = formatter.format(Instant.ofEpochMilli(tuple.f1));
-        return String.format(
-                "+++ParentEntityID: %d, Time: %s, Count: %d", tuple.f0, formattedTime, tuple.f2);
     }
 }
