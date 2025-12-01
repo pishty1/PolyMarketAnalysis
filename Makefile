@@ -9,6 +9,7 @@ deploy:
 	kubectl apply -f infrastructure/k8s/client-deployment.yaml
 	kubectl apply -f infrastructure/k8s/flink-operator/
 	kubectl apply -f infrastructure/k8s/pod-monitor.yaml
+	kubectl apply -f infrastructure/k8s/grafana/dashboard-configmap.yaml
 
 port-forward:
 	# Helpers to access Grafana/Flink UI locally

@@ -57,17 +57,21 @@ make deploy
 ## Monitoring & Access
 
 ### Port Forwarding
-To access the Flink Dashboard or other services locally:
+To access the Flink UI
 
 ```bash
-make port-forward
+kubectl port-forward svc/poly-example-rest 8081:8081
 ```
-*   **Flink Dashboard**: http://localhost:8081
+To access the Grafana dashboard
+
+```bash
+kubectl port-forward svc/prometheus-grafana 3000:80
+```
 
 ### Logs
 Check the logs of the ingestion producer:
 ```bash
-kubectl logs -f -l app=ingestion-producer
+kubectl logs -f -l app=polymarket-client
 ```
 
 Check the logs of the Flink TaskManager:
@@ -87,5 +91,5 @@ kubectl logs -f -l component=taskmanager
 2.  Run `make build` to rebuild the Docker image.
 3.  Restart the deployment:
     ```bash
-    kubectl rollout restart deployment/ingestion-producer
+    kubectl rollout restart deployment/polymarket-client
     ```

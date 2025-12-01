@@ -33,6 +33,12 @@ spec:
     resource:
       memory: "2048m"
       cpu: 1
+    podTemplate:
+      spec:
+        initContainers:
+          - name: wait-for-kafka
+            image: busybox:1.36
+            command: ['sh', '-c', 'until nc -z kafka-service 9092; do echo "Waiting for Kafka..."; sleep 2; done; echo "Kafka is ready!"']
   taskManager:
     resource:
       memory: "2048m"

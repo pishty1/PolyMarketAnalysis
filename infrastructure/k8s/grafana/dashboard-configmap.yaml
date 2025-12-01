@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polymarket-stats-dashboard
+  namespace: default
+  labels:
+    grafana_dashboard: "1"
+data:
+  market-stats.json: |-
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": ""
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            },
+            "barRadius": 0,
+            "barWidth": 0.97,
+            "groupWidth": 0.7,
+            "orientation": "auto",
+            "showValue": "auto",
+            "stacking": "none",
+            "xTickLabelRotation": 0,
+            "xTickLabelSpacing": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "postgres",
+                "uid": ""
+              },
+              "format": "time_series",
+              "group": [],
+              "metricColumn": "none",
+              "rawQuery": true,
+              "rawSql": "SELECT\n  parent_entity_id,\n  window_timestamp AS time,\n  count\nFROM\n  market_stats\nWHERE\n  $__timeFilter(window_timestamp) AND count > 1\nORDER BY\n  window_timestamp ASC",
+              "refId": "A",
+              "select": [
+                [
+                  {
+                    "params": [
+                      "value"
+                    ],
+                    "type": "column"
+                  }
+                ]
+              ],
+              "table": "market_stats",
+              "timeColumn": "window_timestamp",
+              "where": [
+                {
+                  "name": "$__timeFilter",
+                  "params": [],
+                  "type": "macro"
+                }
+              ]
+            }
+          ],
+          "title": "Polymarket Stats",
+          "type": "barchart"
+        }
+      ],
+      "schemaVersion": 38,
+      "style": "dark",
+      "tags": [],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Polymarket Dashboard",
+      "uid": "polymarket-stats-uid",
+      "version": 1,
+      "weekStart": ""
+    }

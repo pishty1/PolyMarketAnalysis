@@ -4,12 +4,19 @@ grafana:
     - name: Postgres
       type: postgres
       url: postgres-postgresql:5432
-      database: polymarket
       user: postgres
       secureJsonData:
         password: postgres
       jsonData:
+        database: polymarket
         sslmode: "disable"
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+    datasources:
+      enabled: true
+      label: grafana_datasource
 prometheus:
   prometheusSpec:
     serviceMonitorSelectorNilUsesHelmValues: false

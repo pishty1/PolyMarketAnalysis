@@ -9,7 +9,7 @@ kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v1.8
 kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=300s
 
 echo "Waiting for cert-manager webhook to be fully ready..."
-sleep 30
+sleep 10
 
 echo "Installing Flink Kubernetes Operator..."
 helm repo add flink-operator-repo https://downloads.apache.org/flink/flink-kubernetes-operator-1.7.0/ || true
