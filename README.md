@@ -26,7 +26,7 @@ This project implements a real-time data pipeline for Polymarket, consisting of 
 - [Minikube](https://minikube.sigs.k8s.io/docs/start/)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 - [Helm](https://helm.sh/)
-- [Java JDK 11+](https://adoptium.net/) (for building Flink jobs)
+- [Java JDK 17](https://adoptium.net/) (for building Flink jobs)
 - [Maven](https://maven.apache.org/) (for building Flink jobs)
 
 ## Quick Start
