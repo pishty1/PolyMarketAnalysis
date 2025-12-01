@@ -18,6 +18,7 @@
 package org.apache.flink.examples;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
 import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
@@ -63,7 +64,8 @@ public class Polymarket {
                 stream.filter(event -> event != null));
 
         aggregatedStream.addSink(JdbcSink.sink(
-                        "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?)",
+                        "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?) " +
+                        "ON CONFLICT (parent_entity_id, window_timestamp) DO UPDATE SET count = EXCLUDED.count",
                         (statement, tuple) -> {
                             statement.setString(1, String.valueOf(tuple.f0));
                             statement.setTimestamp(2, new java.sql.Timestamp(tuple.f1));
@@ -88,29 +90,54 @@ public class Polymarket {
                 .keyBy(event -> event.getParentEntityID())
                 // Window (10 minutes event time)
                 .window(TumblingEventTimeWindows.of(Duration.ofMinutes(10)))
-                // Use ProcessWindowFunction to get window end timestamp
-                .process(new CountWithWindowTimestamp());
+                // Use incremental aggregation to avoid buffering all events in state
+                .aggregate(new CountAggregator(), new CountWithWindowTimestamp());
     }
 
     /**
-     * ProcessWindowFunction that counts elements and outputs the window's end timestamp.
+     * AggregateFunction that incrementally counts events.
+     * This keeps state size constant (1 integer) instead of buffering all events.
+     */
+    public static class CountAggregator
+            implements AggregateFunction<PolymarketEvent, Integer, Integer> {
+
+        @Override
+        public Integer createAccumulator() {
+            return 0;
+        }
+
+        @Override
+        public Integer add(PolymarketEvent value, Integer accumulator) {
+            return accumulator + 1;
+        }
+
+        @Override
+        public Integer getResult(Integer accumulator) {
+            return accumulator;
+        }
+
+        @Override
+        public Integer merge(Integer a, Integer b) {
+            return a + b;
+        }
+    }
+
+    /**
+     * ProcessWindowFunction that receives the pre-aggregated count and outputs with window timestamp.
+     * Combined with CountAggregator via aggregate() for memory-efficient incremental aggregation.
      */
     public static class CountWithWindowTimestamp
-            extends ProcessWindowFunction<PolymarketEvent, Tuple3<Long, Long, Integer>, Long, TimeWindow> {
+            extends ProcessWindowFunction<Integer, Tuple3<Long, Long, Integer>, Long, TimeWindow> {
 
         @Override
         public void process(
                 Long key,
                 Context context,
-                Iterable<PolymarketEvent> elements,
+                Iterable<Integer> counts,
                 Collector<Tuple3<Long, Long, Integer>> out) {
 
-            int count = 0;
-            for (PolymarketEvent element : elements) {
-                count++;
-            }
-
-            // Use window end timestamp instead of message timestamp
+            // We receive only one pre-aggregated count per window
+            Integer count = counts.iterator().next();
             long windowEnd = context.window().getEnd();
             out.collect(Tuple3.of(key, windowEnd, count));
         }
