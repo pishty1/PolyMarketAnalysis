@@ -25,6 +25,8 @@ kubectl wait --for=condition=Ready pod/kafka-0 --timeout=300s
 
 echo "Installing Postgres..."
 helm upgrade --install postgres bitnami/postgresql -f infrastructure/helm/postgres-values.yaml
+echo "Waiting for Postgres to be ready..."
+kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=postgresql --timeout=300s
 
 echo "Installing Prometheus Stack..."
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
