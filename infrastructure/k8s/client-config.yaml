@@ -3,9 +3,6 @@ kind: ConfigMap
 metadata:
   name: polymarket-client-config
 data:
-  POLYMARKET_API_KEY: ""
-  POLYMARKET_API_SECRET: ""
-  POLYMARKET_PASSPHRASE: ""
   WALLET_ADDRESS: ""
   KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
   KAFKA_TOPIC: "polymarket-messages"
