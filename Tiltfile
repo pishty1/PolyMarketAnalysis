@@ -8,6 +8,7 @@ allow_k8s_contexts('minikube')
 
 labels_infra = ["Infrastructure"]
 labels_app = ["Application"]
+cert_manager = ["cert-manager"]
 
 # allow_k8s_contexts('minikube')
 
@@ -33,8 +34,14 @@ helm_remote('flink-kubernetes-operator',
 )
 
 # --- Optional: Labels ---
-k8s_resource('cert-manager', labels=['Infrastructure'])
-k8s_resource('flink-kubernetes-operator', labels=['Application'])
+k8s_resource('cert-manager', labels=cert_manager)
+
+k8s_resource('flink-kubernetes-operator', 
+             labels=labels_infra,
+             resource_deps=['cert-manager'])
+
+for component in ['cert-manager-cainjector', 'cert-manager-webhook', 'cert-manager-startupapicheck']:
+    k8s_resource(component, labels=cert_manager)
 
 
 # --- Kafka ---
@@ -49,62 +56,74 @@ helm_resource('postgres',
               labels=labels_infra)
 
 # --- Prometheus ---
-# helm_repo('prometheus-community', 'https://prometheus-community.github.io/helm-charts')
-# helm_resource('prometheus',
-#               'prometheus-community/kube-prometheus-stack',
-#               flags=['-f', 'infrastructure/helm/prometheus-values.yaml'],
-#               labels=labels_infra)
+helm_repo('prometheus-community', 'https://prometheus-community.github.io/helm-charts')
+helm_resource('prometheus',
+              'prometheus-community/kube-prometheus-stack',
+              flags=['-f', 'infrastructure/helm/prometheus-values.yaml'],
+              labels=labels_infra,
+              resource_deps=['cert-manager'])
+
+# Create a dedicated resource that keeps the port forward open
+local_resource(
+    'grafana-proxy',
+    # This runs the exact command that you verified works manually
+    serve_cmd='kubectl port-forward svc/prometheus-grafana 3000:80',
+    labels=labels_infra,
+    resource_deps=['prometheus'] # Wait for the pods to be ready
+)
+
 
 # 3. PYTHON PRODUCER (With Live Update)
 
-# k8s_yaml('infrastructure/k8s/client-config.yaml')
-# k8s_yaml('infrastructure/k8s/client-deployment.yaml')
+k8s_yaml('infrastructure/k8s/client-config.yaml')
+k8s_yaml('infrastructure/k8s/client-deployment.yaml')
 
-# docker_build(
-#     'ingestion-producer',
-#     context='apps/ingestion-producer',
-#     dockerfile='apps/ingestion-producer/Dockerfile',
-#     live_update=[
-#         sync('apps/ingestion-producer', '/app'),
-#     ],
-#     only=['apps/ingestion-producer']
-# )
 
-# k8s_resource('polymarket-client', 
-#     port_forwards=['8000'],
-#     labels=labels_app,
-#     resource_deps=['kafka', 'postgres'] 
-# )
+docker_build(
+    'ingestion-producer',
+    context='apps/ingestion-producer',
+    dockerfile='apps/ingestion-producer/Dockerfile',
+    live_update=[
+        sync('apps/ingestion-producer', '/app'),
+    ]
+)
+
+k8s_resource('polymarket-client', 
+    port_forwards=['8000'],
+    labels=labels_app,
+    resource_deps=['kafka', 'postgres'] 
+)
 
 # # 4. FLINK ANALYTICS (Java + Maven)
 
-# local_resource(
-#     'maven-compile',
-#     cmd='cd apps/flink-analytics/jobs/poly && mvn clean package -DskipTests',
-#     deps=['apps/flink-analytics/jobs/poly/src', 'apps/flink-analytics/jobs/poly/pom.xml'],
-#     labels=['Build']
-# )
+local_resource(
+    'maven-compile',
+    cmd='cd apps/flink-analytics/jobs/poly && mvn clean package -DskipTests',
+    deps=['apps/flink-analytics/jobs/poly/src', 'apps/flink-analytics/jobs/poly/pom.xml'],
+    labels=['Build']
+)
 
-# docker_build(
-#     'flink-analytics',
-#     context='apps/flink-analytics/jobs/poly',
-#     dockerfile='apps/flink-analytics/jobs/poly/Dockerfile',
-#     only=['apps/flink-analytics/jobs/poly/Dockerfile', 'apps/flink-analytics/jobs/poly/target'],
-# )
+docker_build(
+    'flink-analytics',
+    context='apps/flink-analytics/jobs/poly',
+    dockerfile='apps/flink-analytics/jobs/poly/Dockerfile'
+    # only=['apps/flink-analytics/jobs/poly/Dockerfile', 'apps/flink-analytics/jobs/poly/target'],
+)
 
-# k8s_yaml('infrastructure/k8s/flink-operator/flink-job-deployment.yaml')
+k8s_yaml('infrastructure/k8s/flink-operator/flink-job-deployment.yaml')
 
 # # Tell Tilt how to find the image in the FlinkDeployment CRD.
 # # This link causes Tilt to AUTO-CREATE the 'poly-example' resource.
-# k8s_kind('FlinkDeployment', image_json_path='{.spec.image}')
+k8s_kind('FlinkDeployment', image_json_path='{.spec.image}')
 
 # # CONFIGURE the existing 'poly-example' resource.
 # # We removed 'new_name' and 'objects'.
-# k8s_resource('poly-example',
-#     labels=labels_app,
-#     resource_deps=['flink-kubernetes-operator', 'kafka', 'postgres', 'maven-compile']
-# )
+k8s_resource('poly-example',
+    labels=labels_app,
+    resource_deps=['flink-kubernetes-operator', 'kafka', 'postgres', 'maven-compile']
+)
 
 # # 5. MONITORING CONFIGS
-# k8s_yaml('infrastructure/k8s/pod-monitor.yaml')
-# k8s_yaml('infrastructure/k8s/grafana/dashboard-configmap.yaml')
+k8s_yaml('infrastructure/k8s/pod-monitor.yaml')
+k8s_yaml('infrastructure/k8s/grafana/dashboard-configmap.yaml')
+
