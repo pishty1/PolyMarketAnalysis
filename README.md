@@ -71,7 +71,7 @@ tilt down
 ### Tilt UI
 [http://localhost:10350](http://localhost:10350)
 
-### To access the Grafana UI run this command in a separate terminal:
+### To access the Grafana UI run this command in a separate terminal: (login: admin/admin)
 ```
 kubectl port-forward svc/prometheus-grafana 3000:80 
 ```
