@@ -17,8 +17,7 @@ This project implements a real-time data pipeline for Polymarket, consisting of 
 - `infrastructure/`
     - `helm/`: Values files for Helm charts (Kafka, Postgres, Prometheus).
     - `k8s/`: Kubernetes manifests for deployments, services, and the Flink Operator.
-    - `scripts/`: Helper scripts for bootstrapping and building.
-- `Makefile`: Entry point for common development tasks.
+- `Tiltfile`: Configuration for local development with Tilt.
 
 ## Prerequisites
 
@@ -28,45 +27,60 @@ This project implements a real-time data pipeline for Polymarket, consisting of 
 - [Helm](https://helm.sh/)
 - [Java JDK 17](https://adoptium.net/) (for building Flink jobs)
 - [Maven](https://maven.apache.org/) (for building Flink jobs)
+- [Tilt](https://docs.tilt.dev/install.html) (for local development)
 
 ## Quick Start
 
-The project includes a `Makefile` to streamline the setup, build, and deployment process.
+The project uses [Tilt](https://tilt.dev/) for local development, which handles building, deploying, and live-reloading automatically.
 
-### 1. Setup Cluster
-Initialize Minikube and install infrastructure dependencies (Cert Manager, Flink Operator, Kafka, Postgres, Prometheus).
+### 1. Start the Cluster
+Create a Minikube cluster with sufficient resources:
 
 ```bash
-make setup
+minikube start --cpus 4 --memory 7000
 ```
 
-### 2. Build Images
-Build the Docker images for the Ingestion Producer and Flink Analytics job. This script automatically points to Minikube's Docker daemon.
+### 2. Configure Docker Environment
+Point your terminal's Docker client to Minikube's Docker daemon:
 
 ```bash
-make build
+eval $(minikube docker-env)
 ```
 
-### 3. Deploy Applications
-Deploy the custom applications (Producer and Flink Job) to the cluster.
+### 3. Start the Development Environment
+Run Tilt to build images, deploy infrastructure, and start all applications:
 
 ```bash
-make deploy
+tilt up
+```
+
+Tilt will automatically:
+- Install infrastructure (Flink Operator, Kafka, Postgres, Prometheus/Grafana)
+- Build Docker images for the Ingestion Producer and Flink Analytics job
+- Deploy all applications with proper dependency ordering
+- Set up port forwarding for services
+
+
+To stop and clean up all resources:
+```bash
+tilt down
 ```
 
 ## Monitoring & Access
 
-### Port Forwarding
-To access the Flink UI
+### Tilt UI
+[http://localhost:10350](http://localhost:10350)
 
-```bash
-kubectl port-forward svc/poly-example-rest 8081:8081
+### To access the Grafana UI run this command in a separate terminal:
 ```
-To access the Grafana dashboard
+kubectl port-forward svc/prometheus-grafana 3000:80 
+```
 
-```bash
-kubectl port-forward svc/prometheus-grafana 3000:80
+### To access the Flink UI run this command in a separate terminal:
 ```
+kubectl port-forward svc/poly-example-rest 8081
+```
+
 
 ### Logs
 Check the logs of the ingestion producer:
@@ -81,15 +95,12 @@ kubectl logs -f -l component=taskmanager
 
 ## Development
 
+Tilt provides **live reload** - changes to source files automatically trigger rebuilds and redeployments.
+
 ### Modifying the Flink Job
 1.  Edit code in `apps/flink-analytics/jobs/poly/src/`.
-2.  Run `make build` to rebuild the JAR and Docker image.
-3.  Run `make deploy` to update the deployment.
+2.  Tilt automatically runs Maven, rebuilds the Docker image, and redeploys.
 
 ### Modifying the Ingestion Producer
 1.  Edit code in `apps/ingestion-producer/`.
-2.  Run `make build` to rebuild the Docker image.
-3.  Restart the deployment:
-    ```bash
-    kubectl rollout restart deployment/polymarket-client
-    ```
+2.  Tilt automatically rebuilds and redeploys the container.

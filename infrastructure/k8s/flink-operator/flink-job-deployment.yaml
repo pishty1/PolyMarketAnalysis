@@ -39,72 +39,10 @@ spec:
     resource:
       memory: "2048m"
       cpu: 1
-    podTemplate:
-      spec:
-        initContainers:
-          - name: wait-for-kafka
-            image: confluentinc/cp-kafka:7.5.0
-            command:
-              - sh
-              - -c
-              - |
-                echo "Waiting for Kafka to be ready..."
-                until kafka-broker-api-versions --bootstrap-server kafka-service:9092 2>/dev/null; do
-                  echo "Kafka not ready yet, retrying in 5s..."
-                  sleep 5
-                done
-                echo "Kafka is ready!"
-          - name: wait-for-postgres
-            image: bitnami/postgresql:latest
-            command:
-              - sh
-              - -c
-              - |
-                echo "Waiting for Postgres to be ready..."
-                until pg_isready -h postgres-postgresql -p 5432 -U postgres; do
-                  echo "Postgres not ready yet, retrying in 5s..."
-                  sleep 5
-                done
-                echo "Postgres is ready!"
   taskManager:
     resource:
       memory: "2048m"
       cpu: 1
-    podTemplate:
-      metadata:
-        labels:
-          app: poly-example
-      spec:
-        initContainers:
-          - name: wait-for-kafka
-            image: confluentinc/cp-kafka:7.5.0
-            command:
-              - sh
-              - -c
-              - |
-                echo "Waiting for Kafka to be ready..."
-                until kafka-broker-api-versions --bootstrap-server kafka-service:9092 2>/dev/null; do
-                  echo "Kafka not ready yet, retrying in 5s..."
-                  sleep 5
-                done
-                echo "Kafka is ready!"
-          - name: wait-for-postgres
-            image: bitnami/postgresql:latest
-            command:
-              - sh
-              - -c
-              - |
-                echo "Waiting for Postgres to be ready..."
-                until pg_isready -h postgres-postgresql -p 5432 -U postgres; do
-                  echo "Postgres not ready yet, retrying in 5s..."
-                  sleep 5
-                done
-                echo "Postgres is ready!"
-        containers:
-          - name: flink-main-container
-            ports:
-              - containerPort: 9249
-                name: metrics
   job:
     jarURI: local:///opt/flink/usrlib/poly.jar
     parallelism: 1
