@@ -75,6 +75,7 @@ tilt down
 ```
 kubectl port-forward svc/prometheus-grafana 3000:80 
 ```
+[http://localhost:3000](http://localhost:3000)
 
 ### To access the Flink UI run this command in a separate terminal:
 ```

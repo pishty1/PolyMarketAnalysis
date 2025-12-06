@@ -23,7 +23,7 @@ metadata:
 spec:
   image: flink-analytics:latest
   imagePullPolicy: IfNotPresent
-  flinkVersion: v1_20
+  flinkVersion: v2_2
   flinkConfiguration:
     taskmanager.numberOfTaskSlots: "1"
     metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory

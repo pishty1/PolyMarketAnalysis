@@ -55,7 +55,7 @@
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-streaming-java</artifactId>
-      <version>1.20.1</version>
+      <version>2.2.0</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -71,20 +71,12 @@
           <groupId>org.apache.flink</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>flink-java</artifactId>
-          <groupId>org.apache.flink</groupId>
-        </exclusion>
-        <exclusion>
           <artifactId>flink-shaded-guava</artifactId>
           <groupId>org.apache.flink</groupId>
         </exclusion>
         <exclusion>
           <artifactId>commons-math3</artifactId>
           <groupId>org.apache.commons</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>flink-connector-datagen</artifactId>
-          <groupId>org.apache.flink</groupId>
         </exclusion>
         <exclusion>
           <artifactId>jsr305</artifactId>
@@ -95,7 +87,7 @@
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-table-api-java</artifactId>
-      <version>1.20.1</version>
+      <version>2.2.0</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -135,7 +127,7 @@
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-test-utils</artifactId>
-      <version>1.20.1</version>
+      <version>2.2.0</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -217,6 +209,30 @@
         <exclusion>
           <artifactId>byte-buddy</artifactId>
           <groupId>net.bytebuddy</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>1.19.1</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>jdbc</artifactId>
+          <groupId>org.testcontainers</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>1.19.1</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>testcontainers</artifactId>
+          <groupId>org.testcontainers</groupId>
         </exclusion>
       </exclusions>
     </dependency>
