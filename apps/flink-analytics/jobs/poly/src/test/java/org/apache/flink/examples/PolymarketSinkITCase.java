@@ -1,6 +1,10 @@
 package org.apache.flink.examples;
 
+import org.apache.flink.api.connector.sink2.Sink;
 import org.apache.flink.api.java.tuple.Tuple3;
+import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
+import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
+import org.apache.flink.connector.jdbc.core.datastream.sink.JdbcSink;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.junit.jupiter.api.AfterAll;
@@ -49,6 +53,32 @@ public class PolymarketSinkITCase {
         postgres.stop();
     }
 
+    /** Creates a JDBC sink using Flink 2.x JdbcSink builder with upsert support */
+    private Sink<Tuple3<Long, Long, Integer>> createJdbcSink() {
+        return JdbcSink.<Tuple3<Long, Long, Integer>>builder()
+                .withQueryStatement(
+                        "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?) " +
+                        "ON CONFLICT (parent_entity_id, window_timestamp) DO UPDATE SET count = EXCLUDED.count",
+                        (statement, tuple) -> {
+                            statement.setString(1, String.valueOf(tuple.f0));
+                            statement.setTimestamp(2, new java.sql.Timestamp(tuple.f1));
+                            statement.setInt(3, tuple.f2);
+                        })
+                .withExecutionOptions(
+                        JdbcExecutionOptions.builder()
+                                .withBatchSize(100)
+                                .withBatchIntervalMs(100)
+                                .withMaxRetries(3)
+                                .build())
+                .buildAtLeastOnce(
+                        new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                                .withUrl(postgres.getJdbcUrl())
+                                .withDriverName("org.postgresql.Driver")
+                                .withUsername(postgres.getUsername())
+                                .withPassword(postgres.getPassword())
+                                .build());
+    }
+
     /** Helper to clear the table between tests */
     private void clearTable() throws Exception {
         try (Connection conn = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
@@ -91,13 +121,8 @@ public class PolymarketSinkITCase {
                 Tuple3.of(105L, 1700000000000L, 1)
         );
 
-        // 4. Attach YOUR Custom Sink
-        // We get the JDBC URL dynamically from the running container
-        stream.sinkTo(new PolymarketJdbcSink(
-                postgres.getJdbcUrl(),
-                postgres.getUsername(),
-                postgres.getPassword()
-        ));
+        // 4. Attach JDBC Sink using Flink 2.x JdbcSink builder
+        stream.sinkTo(createJdbcSink());
 
         // 5. Execute the Job
         env.execute("Test Sink");
@@ -159,11 +184,7 @@ public class PolymarketSinkITCase {
                 )
         );
 
-        stream.sinkTo(new PolymarketJdbcSink(
-                postgres.getJdbcUrl(),
-                postgres.getUsername(),
-                postgres.getPassword()
-        ));
+        stream.sinkTo(createJdbcSink());
 
         env.execute("Test Empty Sink");
 
@@ -193,11 +214,7 @@ public class PolymarketSinkITCase {
                 Tuple3.of(Long.MIN_VALUE, 1700000000000L, 42)
         );
 
-        stream.sinkTo(new PolymarketJdbcSink(
-                postgres.getJdbcUrl(),
-                postgres.getUsername(),
-                postgres.getPassword()
-        ));
+        stream.sinkTo(createJdbcSink());
 
         env.execute("Test Boundary Values");
 
@@ -257,11 +274,7 @@ public class PolymarketSinkITCase {
                 Tuple3.of(101L, baseTimestamp + oneHour, 250)
         );
 
-        stream.sinkTo(new PolymarketJdbcSink(
-                postgres.getJdbcUrl(),
-                postgres.getUsername(),
-                postgres.getPassword()
-        ));
+        stream.sinkTo(createJdbcSink());
 
         env.execute("Test Multiple Time Windows");
 
@@ -318,11 +331,7 @@ public class PolymarketSinkITCase {
                 Tuple3.of(3L, farFuture, 3)
         );
 
-        stream.sinkTo(new PolymarketJdbcSink(
-                postgres.getJdbcUrl(),
-                postgres.getUsername(),
-                postgres.getPassword()
-        ));
+        stream.sinkTo(createJdbcSink());
 
         env.execute("Test Timestamp Precision");
 
@@ -370,11 +379,7 @@ public class PolymarketSinkITCase {
 
         DataStream<Tuple3<Long, Long, Integer>> stream = env.fromCollection(data);
 
-        stream.sinkTo(new PolymarketJdbcSink(
-                postgres.getJdbcUrl(),
-                postgres.getUsername(),
-                postgres.getPassword()
-        ));
+        stream.sinkTo(createJdbcSink());
 
         env.execute("Test Large Dataset");
 
@@ -441,11 +446,7 @@ public class PolymarketSinkITCase {
                 Tuple3.of(5L, timestamp, 51)   // Update 5
         );
 
-        stream.sinkTo(new PolymarketJdbcSink(
-                postgres.getJdbcUrl(),
-                postgres.getUsername(),
-                postgres.getPassword()
-        ));
+        stream.sinkTo(createJdbcSink());
 
         env.execute("Test Interleaved Updates");
 
