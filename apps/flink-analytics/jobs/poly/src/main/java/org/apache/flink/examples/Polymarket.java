@@ -20,10 +20,9 @@ package org.apache.flink.examples;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.java.tuple.Tuple3;
-// import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
-// import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
-// import org.apache.flink.connector.jdbc.JdbcSink;
-// import org.apache.flink.streaming.api.functions.sink.legacy.SinkFunction;
+import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
+import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
+import org.apache.flink.connector.jdbc.core.datastream.sink.JdbcSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.examples.model.PolymarketEvent;
@@ -48,7 +47,7 @@ public class Polymarket {
                 .setBootstrapServers("kafka-service:9092")
                 .setTopics("polymarket-messages")
                 .setGroupId("flink-analytics-group")
-                .setStartingOffsets(OffsetsInitializer.latest())
+                .setStartingOffsets(OffsetsInitializer.earliest())
                 .setValueOnlyDeserializer(new PolymarketEventDeserializer())
                 .build();
 
@@ -64,18 +63,35 @@ public class Polymarket {
         DataStream<Tuple3<Long, Long, Integer>> aggregatedStream = createAggregationPipeline(
                 stream.filter(event -> event != null));
 
-        aggregatedStream.sinkTo(new PolymarketJdbcSink(
-                "jdbc:postgresql://postgres-postgresql:5432/polymarket",
-                "postgres",
-                "postgres"
-        ));
-
+        // 5. Configure and attach custom JDBC Sink (Flink 2.x compatible)
+        aggregatedStream.sinkTo(
+                JdbcSink.<Tuple3<Long, Long, Integer>>builder()
+                        .withQueryStatement(
+                                "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?)",
+                                (statement, tuple) -> {
+                                    statement.setString(1, String.valueOf(tuple.f0));
+                                    statement.setTimestamp(2, new java.sql.Timestamp(tuple.f1));
+                                    statement.setInt(3, tuple.f2);
+                                })
+                        .withExecutionOptions(
+                                JdbcExecutionOptions.builder()
+                                        .withBatchSize(1000)
+                                        .withBatchIntervalMs(200)
+                                        .withMaxRetries(5)
+                                        .build())
+                        .buildAtLeastOnce(
+                                new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                                        .withUrl("jdbc:postgresql://postgres-postgresql:5432/polymarket")
+                                        .withDriverName("org.postgresql.Driver")
+                                        .withUsername("postgres")
+                                        .withPassword("postgres")
+                                        .build()));
         env.execute("Polymarket Comments Analysis");
 
     }
 
-
-    public static DataStream<Tuple3<Long, Long, Integer>> createAggregationPipeline(DataStream<PolymarketEvent> stream) {
+    public static DataStream<Tuple3<Long, Long, Integer>> createAggregationPipeline(
+            DataStream<PolymarketEvent> stream) {
         return stream
                 .keyBy(event -> event.getParentEntityID())
                 // Window (10 minutes event time)
@@ -113,8 +129,10 @@ public class Polymarket {
     }
 
     /**
-     * ProcessWindowFunction that receives the pre-aggregated count and outputs with window timestamp.
-     * Combined with CountAggregator via aggregate() for memory-efficient incremental aggregation.
+     * ProcessWindowFunction that receives the pre-aggregated count and outputs with
+     * window timestamp.
+     * Combined with CountAggregator via aggregate() for memory-efficient
+     * incremental aggregation.
      */
     public static class CountWithWindowTimestamp
             extends ProcessWindowFunction<Integer, Tuple3<Long, Long, Integer>, Long, TimeWindow> {
