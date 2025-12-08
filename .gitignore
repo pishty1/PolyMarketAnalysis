@@ -1,3 +1,6 @@
 **/target
 .DS_Store
-blog.md
+tasks/
+.vscode/
+tools/
+navigator.config.json
