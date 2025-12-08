@@ -67,7 +67,7 @@ public class Polymarket {
         aggregatedStream.sinkTo(
                 JdbcSink.<Tuple3<Long, Long, Integer>>builder()
                         .withQueryStatement(
-                                "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?)",
+                                "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?) ON CONFLICT (parent_entity_id, window_timestamp) DO UPDATE SET count = market_stats.count + EXCLUDED.count",
                                 (statement, tuple) -> {
                                     statement.setString(1, String.valueOf(tuple.f0));
                                     statement.setTimestamp(2, new java.sql.Timestamp(tuple.f1));
