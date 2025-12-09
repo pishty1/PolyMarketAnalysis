@@ -1,4 +1,8 @@
+import fnmatch
+import json
 import os
+import shutil
+import subprocess
 import argparse
 
 def get_java_boilerplate_excludes():
@@ -13,9 +17,9 @@ def get_java_boilerplate_excludes():
         ".vscode",
         "build",
         "out",
-        "/Users/pishty/ws/flink/docs/content.zh"
+        "/Users/pishty/ws/flink/docs/content.zh",
 
-        # Files
+        # Files and globs
         ".gitignore",
         ".gitattributes",
         "pom.xml.tag",
@@ -32,23 +36,140 @@ def get_java_boilerplate_excludes():
         "*.log",
         "*.tmp",
         "*.swp",
+        "*.zh",
     }
 
-def search_in_repository(search_term, repo_path, exclude_items):
-    """
-    Recursively searches for a term in a repository, excluding specified files and directories.
 
-    Args:
-        search_term (str): The term to search for.
-        repo_path (str): The path to the root of the repository.
-        exclude_items (set): A set of file and directory names to exclude.
-    """
+def matches_exclude(name, exclude_patterns):
+    """Return True if the name matches any exclude glob pattern."""
+    return any(fnmatch.fnmatch(name, pattern) for pattern in exclude_patterns)
+
+
+def matches_exclude_path(file_path, exclude_patterns, repo_path):
+    """Return True if the relative file path matches any of the exclude patterns."""
+    try:
+        relative = os.path.relpath(file_path, repo_path)
+    except ValueError:
+        relative = file_path
+    normalized = relative.replace(os.sep, '/')
+    components = normalized.split('/')
+    if matches_exclude(os.path.basename(file_path), exclude_patterns):
+        return True
+
+    for pattern in exclude_patterns:
+        if not pattern:
+            continue
+        normalized_pattern = pattern.replace(os.sep, '/')
+        has_wildcard = any(ch in normalized_pattern for ch in "*?[]")
+        if has_wildcard:
+            if fnmatch.fnmatch(normalized, normalized_pattern):
+                return True
+            if any(fnmatch.fnmatch(comp, normalized_pattern) for comp in components):
+                return True
+        else:
+            if normalized == normalized_pattern or normalized.startswith(f"{normalized_pattern}/"):
+                return True
+            if normalized_pattern in components:
+                return True
+    return False
+
+
+def build_ripgrep_globs(exclude_items, repo_path):
+    """Generate glob patterns for ripgrep that mirror the exclude list."""
+    globs = []
+    seen = set()
+    repo_root = os.path.abspath(repo_path)
+    for item in exclude_items:
+        if not item:
+            continue
+        pattern = item
+        if os.path.isabs(pattern):
+            try:
+                rel = os.path.relpath(pattern, repo_root)
+            except ValueError:
+                continue
+            if rel.startswith(os.pardir):
+                continue
+            pattern = rel
+        normalized = pattern.strip('/\\')
+        if not normalized:
+            continue
+        normalized = normalized.replace(os.sep, '/')
+        entries = {normalized, f"**/{normalized}"}
+        if not any(ch in normalized for ch in "*?[]"):
+            entries.update({
+                f"{normalized}/**",
+                f"**/{normalized}/**",
+            })
+        for variant in entries:
+            if variant not in seen:
+                globs.append(variant)
+                seen.add(variant)
+    return globs
+
+
+def search_with_ripgrep(search_term, repo_path, exclude_items):
+    """Use ripgrep to search while honoring exclude globs and keep counts per file."""
+    rg_path = shutil.which("rg")
+    if not rg_path:
+        raise FileNotFoundError("ripgrep not installed")
+
+    globs = build_ripgrep_globs(exclude_items, repo_path)
+    cmd = [
+        rg_path,
+        "--json",
+        "--no-heading",
+        "--line-number",
+        "--with-filename",
+        "--fixed-strings",
+    ]
+    for glob_pattern in globs:
+        cmd.extend(["--glob", f"!{glob_pattern}"])
+    cmd.extend(["--", search_term, repo_path])
+
+    process = subprocess.run(cmd, capture_output=True, text=True)
+    if process.returncode not in (0, 1):
+        raise subprocess.CalledProcessError(
+            process.returncode, cmd, output=process.stdout, stderr=process.stderr
+        )
+
+    matches_by_file = {}
+    for raw in process.stdout.splitlines():
+        if not raw.strip():
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("type") != "match":
+            continue
+        data = payload["data"]
+        relative_path = data["path"]["text"]
+        file_path = os.path.normpath(os.path.join(repo_path, relative_path))
+        if matches_exclude_path(file_path, exclude_items, repo_path):
+            continue
+        line_num = data["line_number"]
+        line_text = data["lines"]["text"].rstrip("\n")
+        matches_by_file.setdefault(file_path, []).append((line_num, line_text))
+
+    if not matches_by_file:
+        return
+
+    print(f"Total files found: {len(matches_by_file)}")
+    for file_path, matches in sorted(matches_by_file.items(), key=lambda item: len(item[1]), reverse=True):
+        print(f"{file_path} ({len(matches)} matches)")
+
+
+
+def search_in_repository(search_term, repo_path, exclude_items):
+    """Recursively searches for a term, excluding specified items, and ranks files by hit count."""
+    matches_by_file = {}
+
     for root, dirs, files in os.walk(repo_path, topdown=True):
-        # Exclude directories by modifying the dirs list in-place
-        dirs[:] = [d for d in dirs if d not in exclude_items]
+        dirs[:] = [d for d in dirs if not matches_exclude(d, exclude_items)]
 
         for file in files:
-            if file in exclude_items:
+            if matches_exclude(file, exclude_items):
                 continue
 
             file_path = os.path.join(root, file)
@@ -56,11 +177,16 @@ def search_in_repository(search_term, repo_path, exclude_items):
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     for line_num, line in enumerate(f, 1):
                         if search_term in line:
-                            print(f"Found '{search_term}' in {file_path} on line {line_num}:")
-                            print(f"  {line.strip()}")
-                            print("-" * 20)
+                            matches_by_file.setdefault(file_path, []).append((line_num, line.strip()))
             except Exception as e:
                 print(f"Could not read file {file_path}: {e}")
+
+    if not matches_by_file:
+        return
+
+    print(f"Total files found: {len(matches_by_file)}")
+    for file_path, matches in sorted(matches_by_file.items(), key=lambda item: len(item[1]), reverse=True):
+        print(f"{file_path} ({len(matches)} matches)")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -83,4 +209,4 @@ if __name__ == "__main__":
     if not os.path.isdir(args.repo_path):
         print(f"Error: The specified repository path does not exist or is not a directory: {args.repo_path}")
     else:
-        search_in_repository(args.search_term, args.repo_path, all_excludes)
+        search_with_ripgrep(args.search_term, args.repo_path, all_excludes)
