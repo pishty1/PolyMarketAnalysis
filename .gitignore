@@ -4,3 +4,4 @@ tasks/
 .vscode/
 navigator.config.json
 .smartsearch-conf.json
+__pycache__
