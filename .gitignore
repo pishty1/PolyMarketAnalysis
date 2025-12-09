@@ -2,5 +2,5 @@
 .DS_Store
 tasks/
 .vscode/
-tools/
 navigator.config.json
+.smartsearch-conf.json
