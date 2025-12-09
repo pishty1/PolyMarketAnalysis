@@ -37,6 +37,7 @@ def get_java_boilerplate_excludes():
         "*.tmp",
         "*.swp",
         "*.zh",
+        "*.scala"
     }
 
 
@@ -155,38 +156,9 @@ def search_with_ripgrep(search_term, repo_path, exclude_items):
     if not matches_by_file:
         return
 
-    print(f"Total files found: {len(matches_by_file)}")
-    for file_path, matches in sorted(matches_by_file.items(), key=lambda item: len(item[1]), reverse=True):
+    for file_path, matches in sorted(matches_by_file.items(), key=lambda item: len(item[1]), reverse=False):
         print(f"{file_path} ({len(matches)} matches)")
-
-
-
-def search_in_repository(search_term, repo_path, exclude_items):
-    """Recursively searches for a term, excluding specified items, and ranks files by hit count."""
-    matches_by_file = {}
-
-    for root, dirs, files in os.walk(repo_path, topdown=True):
-        dirs[:] = [d for d in dirs if not matches_exclude(d, exclude_items)]
-
-        for file in files:
-            if matches_exclude(file, exclude_items):
-                continue
-
-            file_path = os.path.join(root, file)
-            try:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    for line_num, line in enumerate(f, 1):
-                        if search_term in line:
-                            matches_by_file.setdefault(file_path, []).append((line_num, line.strip()))
-            except Exception as e:
-                print(f"Could not read file {file_path}: {e}")
-
-    if not matches_by_file:
-        return
-
     print(f"Total files found: {len(matches_by_file)}")
-    for file_path, matches in sorted(matches_by_file.items(), key=lambda item: len(item[1]), reverse=True):
-        print(f"{file_path} ({len(matches)} matches)")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
