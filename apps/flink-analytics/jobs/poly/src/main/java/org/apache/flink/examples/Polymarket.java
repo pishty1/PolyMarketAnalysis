@@ -18,8 +18,6 @@
 package org.apache.flink.examples;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.functions.AggregateFunction;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
 import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
 import org.apache.flink.connector.jdbc.core.datastream.sink.JdbcSink;
@@ -29,18 +27,20 @@ import org.apache.flink.examples.model.PolymarketEvent;
 import org.apache.flink.examples.serde.PolymarketEventDeserializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
-import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
-import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
-import org.apache.flink.util.Collector;
+import org.apache.flink.table.api.Schema;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.types.Row;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 
 /** Main class for Polymarket comments analytics. */
 public class Polymarket {
 
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
 
         // 1. Configure Kafka Source with typed deserializer
         KafkaSource<PolymarketEvent> source = KafkaSource.<PolymarketEvent>builder()
@@ -59,19 +59,22 @@ public class Polymarket {
         // 3. Create Stream
         DataStream<PolymarketEvent> stream = env.fromSource(source, watermarkStrategy, "Kafka Source");
 
-        // 4. Filter out null events (malformed messages) and process
-        DataStream<Tuple3<Long, Long, Integer>> aggregatedStream = createAggregationPipeline(
-                stream.filter(event -> event != null));
+        // 4. Compute Stats
+        Table resultTable = computeMarketStats(tableEnv, stream.filter(event -> event != null));
 
-        // 5. Configure and attach custom JDBC Sink (Flink 2.x compatible)
-        aggregatedStream.sinkTo(
-                JdbcSink.<Tuple3<Long, Long, Integer>>builder()
+        // 5. Convert to DataStream
+        DataStream<Row> rowStream = tableEnv.toDataStream(resultTable);
+
+        // 6. Sink using JDBC DataStream API
+        rowStream.sinkTo(
+                JdbcSink.<Row>builder()
                         .withQueryStatement(
-                                "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?) ON CONFLICT (parent_entity_id, window_timestamp) DO UPDATE SET count = market_stats.count + EXCLUDED.count",
-                                (statement, tuple) -> {
-                                    statement.setString(1, String.valueOf(tuple.f0));
-                                    statement.setTimestamp(2, new java.sql.Timestamp(tuple.f1));
-                                    statement.setInt(3, tuple.f2);
+                                "INSERT INTO market_stats (parent_entity_id, window_timestamp, count) VALUES (?, ?, ?) " +
+                                        "ON CONFLICT (parent_entity_id, window_timestamp) DO UPDATE SET count = EXCLUDED.count",
+                                (statement, row) -> {
+                                    statement.setLong(1, row.getFieldAs(0)); // parentEntityID
+                                    statement.setTimestamp(2, java.sql.Timestamp.valueOf(row.<LocalDateTime>getFieldAs(1))); // window_end
+                                    statement.setLong(3, row.getFieldAs(2)); // count
                                 })
                         .withExecutionOptions(
                                 JdbcExecutionOptions.builder()
@@ -84,70 +87,32 @@ public class Polymarket {
                                         .withUrl("jdbc:postgresql://postgres-postgresql:5432/polymarket")
                                         .withDriverName("org.postgresql.Driver")
                                         .withUsername("postgres")
-                                        .withPassword("postgres")
+                                        .withPassword("postgresTableEnvironmentTest.java")
                                         .build()));
+
         env.execute("Polymarket Comments Analysis");
-
     }
 
-    public static DataStream<Tuple3<Long, Long, Integer>> createAggregationPipeline(
-            DataStream<PolymarketEvent> stream) {
-        return stream
-                .keyBy(event -> event.getParentEntityID())
-                // Window (10 minutes event time)
-                .window(TumblingEventTimeWindows.of(Duration.ofMinutes(10)))
-                // Use incremental aggregation to avoid buffering all events in state
-                .aggregate(new CountAggregator(), new CountWithWindowTimestamp());
-    }
+    public static Table computeMarketStats(StreamTableEnvironment tableEnv, DataStream<PolymarketEvent> stream) {
+        // Convert to Table with watermark propagation
+        Table events = tableEnv.fromDataStream(
+                stream,
+                Schema.newBuilder()
+                        .columnByMetadata("rowtime", "TIMESTAMP_LTZ(3)")
+                        .watermark("rowtime", "SOURCE_WATERMARK()")
+                        .build());
 
-    /**
-     * AggregateFunction that incrementally counts events.
-     * This keeps state size constant (1 integer) instead of buffering all events.
-     */
-    public static class CountAggregator
-            implements AggregateFunction<PolymarketEvent, Integer, Integer> {
+        tableEnv.createTemporaryView("events", events);
 
-        @Override
-        public Integer createAccumulator() {
-            return 0;
-        }
-
-        @Override
-        public Integer add(PolymarketEvent value, Integer accumulator) {
-            return accumulator + 1;
-        }
-
-        @Override
-        public Integer getResult(Integer accumulator) {
-            return accumulator;
-        }
-
-        @Override
-        public Integer merge(Integer a, Integer b) {
-            return a + b;
-        }
-    }
-
-    /**
-     * ProcessWindowFunction that receives the pre-aggregated count and outputs with
-     * window timestamp.
-     * Combined with CountAggregator via aggregate() for memory-efficient
-     * incremental aggregation.
-     */
-    public static class CountWithWindowTimestamp
-            extends ProcessWindowFunction<Integer, Tuple3<Long, Long, Integer>, Long, TimeWindow> {
-
-        @Override
-        public void process(
-                Long key,
-                Context context,
-                Iterable<Integer> counts,
-                Collector<Tuple3<Long, Long, Integer>> out) {
-
-            // We receive only one pre-aggregated count per window
-            Integer count = counts.iterator().next();
-            long windowEnd = context.window().getEnd();
-            out.collect(Tuple3.of(key, windowEnd, count));
-        }
+        // Execute Aggregation
+        return tableEnv.sqlQuery(
+                "SELECT " +
+                        "  payload.parentEntityID, " +
+                        "  window_end, " +
+                        "  COUNT(*) " +
+                        "FROM TABLE(" +
+                        "  TUMBLE(TABLE events, DESCRIPTOR(rowtime), INTERVAL '10' MINUTES)" +
+                        ") " +
+                        "GROUP BY payload.parentEntityID, window_start, window_end");
     }
 }

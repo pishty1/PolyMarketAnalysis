@@ -8,6 +8,9 @@ import org.apache.flink.examples.serde.PolymarketEventDeserializer;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.types.Row;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.ClassRule;
@@ -81,71 +84,92 @@ public class PolymarketTest {
     public void testAggregationPipeline() throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
 
         // Create test data
-        long t1 = 1000L; // Inside Window 1
+        long t1 = 1000L; // Inside Window 1 (0-10 min)
         long t2 = 2000L; // Inside Window 1
-        long t3 = 600001L; // Inside Window 2
+        long t3 = 600001L; // Inside Window 2 (10-20 min) - 10 mins + 1ms
 
-        String json1 = String.format("{\"timestamp\": %d, \"payload\": {\"parentEntityID\": 1}}", t1);
-        String json2 = String.format("{\"timestamp\": %d, \"payload\": {\"parentEntityID\": 1}}", t2);
-        String json3 = String.format("{\"timestamp\": %d, \"payload\": {\"parentEntityID\": 1}}", t3);
-        String json4 = String.format("{\"timestamp\": %d, \"payload\": {\"parentEntityID\": 2}}", t1);
-
-        // Note: Assuming your deserializer has a method for String or you convert to bytes here
-        PolymarketEvent event1 = deserializer.deserialize(json1.getBytes());
-        PolymarketEvent event2 = deserializer.deserialize(json2.getBytes());
-        PolymarketEvent event3 = deserializer.deserialize(json3.getBytes());
-        PolymarketEvent event4 = deserializer.deserialize(json4.getBytes());
+        PolymarketEvent event1 = createEvent(t1, 1L);
+        PolymarketEvent event2 = createEvent(t2, 1L);
+        PolymarketEvent event3 = createEvent(t3, 1L);
+        PolymarketEvent event4 = createEvent(t1, 2L);
 
         DataStream<PolymarketEvent> source = env.fromElements(event1, event2, event3, event4)
                 .assignTimestampsAndWatermarks(
-                        WatermarkStrategy.<PolymarketEvent>forBoundedOutOfOrderness(Duration.ofSeconds(1))
+                        WatermarkStrategy.<PolymarketEvent>forBoundedOutOfOrderness(Duration.ofSeconds(0))
                                 .withTimestampAssigner((event, timestamp) -> event.getTimestamp())
                 );
 
-        DataStream<Tuple3<Long, Long, Integer>> resultStream = Polymarket.createAggregationPipeline(source);
+        Table resultTable = Polymarket.computeMarketStats(tableEnv, source);
 
-        // --- NEW APPROACH: executeAndCollect ---
-        // This replaces result.addSink(new CollectSink()) and env.execute()
-        
-        List<Tuple3<Long, Long, Integer>> results = new ArrayList<>();
-        
-        try (CloseableIterator<Tuple3<Long, Long, Integer>> iterator = resultStream.executeAndCollect()) {
-            iterator.forEachRemaining(results::add);
+        // Convert result Table back to DataStream<Row> to verify results
+        DataStream<Row> resultStream = tableEnv.toDataStream(resultTable);
+
+        List<Row> results = new ArrayList<>();
+        try (CloseableIterator<Row> iterator = resultStream.executeAndCollect()) {
+            while (iterator.hasNext()) {
+                results.add(iterator.next());
+            }
         }
 
-        // --- VERIFICATION ---
-        
+        // Verify results
+        // Expected Schema: parentEntityID (BIGINT), window_end (TIMESTAMP), cnt (BIGINT)
+        // Window 1 (0-10m): ID 1 -> count 2
+        // Window 1 (0-10m): ID 2 -> count 1
+        // Window 2 (10-20m): ID 1 -> count 1
+
+        System.out.println("Results: " + results);
+
         assertThat(results).hasSize(3);
 
+        // Helper to find row by ID and Window End
         // Window 1 ends at 600,000ms
         long window1End = 600_000L;
         // Window 2 ends at 1,200,000ms
         long window2End = 1_200_000L;
 
         // ID 1, Window 1: count 2
-        Tuple3<Long, Long, Integer> id1Window1 = results.stream()
-                .filter(t -> t.f0 == 1L && t.f1 == window1End)
+        Row id1Window1 = results.stream()
+                .filter(r -> (long) r.getField(0) == 1L && compareWindowEnd(r.getField(1), window1End))
                 .findFirst()
                 .orElse(null);
         assertThat(id1Window1).isNotNull();
-        assertThat(id1Window1.f2).isEqualTo(2);
+        assertThat((long) id1Window1.getField(2)).isEqualTo(2L);
 
         // ID 1, Window 2: count 1
-        Tuple3<Long, Long, Integer> id1Window2 = results.stream()
-                .filter(t -> t.f0 == 1L && t.f1 == window2End)
+        Row id1Window2 = results.stream()
+                .filter(r -> (long) r.getField(0) == 1L && compareWindowEnd(r.getField(1), window2End))
                 .findFirst()
                 .orElse(null);
         assertThat(id1Window2).isNotNull();
-        assertThat(id1Window2.f2).isEqualTo(1);
+        assertThat((long) id1Window2.getField(2)).isEqualTo(1L);
 
         // ID 2, Window 1: count 1
-        Tuple3<Long, Long, Integer> id2Window1 = results.stream()
-                .filter(t -> t.f0 == 2L && t.f1 == window1End)
+        Row id2Window1 = results.stream()
+                .filter(r -> (long) r.getField(0) == 2L && compareWindowEnd(r.getField(1), window1End))
                 .findFirst()
                 .orElse(null);
         assertThat(id2Window1).isNotNull();
-        assertThat(id2Window1.f2).isEqualTo(1);
+        assertThat((long) id2Window1.getField(2)).isEqualTo(1L);
+    }
+
+    private boolean compareWindowEnd(Object field, long expectedMillis) {
+        long actualMillis;
+        if (field instanceof java.time.LocalDateTime) {
+            actualMillis = ((java.time.LocalDateTime) field).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+        } else if (field instanceof java.time.Instant) {
+            actualMillis = ((java.time.Instant) field).toEpochMilli();
+        } else {
+            throw new RuntimeException("Unknown time type: " + field.getClass());
+        }
+        return actualMillis == expectedMillis;
+    }
+
+    private PolymarketEvent createEvent(long timestamp, long parentEntityID) {
+        CommentPayload payload = new CommentPayload();
+        payload.setParentEntityID(parentEntityID);
+        return new PolymarketEvent("topic", "type", timestamp, payload);
     }
 }
