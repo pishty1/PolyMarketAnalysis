@@ -87,7 +87,7 @@ public class Polymarket {
                                         .withUrl("jdbc:postgresql://postgres-postgresql:5432/polymarket")
                                         .withDriverName("org.postgresql.Driver")
                                         .withUsername("postgres")
-                                        .withPassword("postgresTableEnvironmentTest.java")
+                                        .withPassword("postgres")
                                         .build()));
 
         env.execute("Polymarket Comments Analysis");
