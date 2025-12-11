@@ -1,175 +1,191 @@
 package org.apache.flink.examples;
 
-import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.java.tuple.Tuple3;
-import org.apache.flink.examples.model.CommentPayload;
-import org.apache.flink.examples.model.PolymarketEvent;
-import org.apache.flink.examples.serde.PolymarketEventDeserializer;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.table.api.Table;
-import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.api.EnvironmentSettings;
+import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.planner.factories.TestValuesTableFactory;
+import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.apache.flink.types.Row;
-import org.apache.flink.test.util.MiniClusterWithClientResource;
-import org.apache.flink.util.CloseableIterator;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
-import java.io.IOException;
 import java.time.Duration;
-import java.util.ArrayList;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 
-public class PolymarketTest {
+class PolymarketTest {
 
-    @ClassRule
-    public static MiniClusterWithClientResource flinkCluster =
-            new MiniClusterWithClientResource(
+    @RegisterExtension
+    static final MiniClusterExtension MINI_CLUSTER_RESOURCE =
+            new MiniClusterExtension(
                     new MiniClusterResourceConfiguration.Builder()
-                            .setNumberSlotsPerTaskManager(2)
                             .setNumberTaskManagers(1)
+                            .setNumberSlotsPerTaskManager(4)
                             .build());
 
-    private final PolymarketEventDeserializer deserializer = new PolymarketEventDeserializer();
+    private static final String SOURCE_DDL_TEMPLATE = """
+            CREATE TEMPORARY TABLE source_events (
+                `topic` STRING,
+                `type` STRING,
+                `timestamp` BIGINT,
+                `payload` ROW<
+                    parentEntityID BIGINT,
+                    body STRING
+                >,
+                `event_time` AS TO_TIMESTAMP_LTZ(`timestamp`, 3),
+                WATERMARK FOR `event_time` AS `event_time` - INTERVAL '1' SECOND
+            ) WITH (
+                'connector' = 'values',
+                'data-id' = '%s',
+                'bounded' = 'true'
+            )
+            """;
 
-    // ... [The Deserialization tests (testDeserializeFullEvent, etc.) remain exactly the same] ...
-    
+    private static final String SINK_DDL_TEMPLATE = """
+            CREATE TEMPORARY TABLE %s (
+                parent_entity_id BIGINT,
+                window_timestamp TIMESTAMP(3),
+                cnt BIGINT,
+                PRIMARY KEY (parent_entity_id, window_timestamp) NOT ENFORCED
+            ) WITH (
+                'connector' = 'values',
+                'sink-insert-only' = 'false'
+            )
+            """;
+
+    private static final String INSERT_SQL_TEMPLATE = """
+            INSERT INTO %s
+            SELECT
+                payload.parentEntityID,
+                window_end,
+                COUNT(*)
+            FROM TABLE(
+                TUMBLE(TABLE source_events, DESCRIPTOR(event_time), INTERVAL '10' MINUTES)
+            )
+            GROUP BY payload.parentEntityID, window_start, window_end
+            """;
+
     @Test
-    public void testDeserializeFullEvent() throws IOException {
-        String json = """
-                {
-                  "topic": "comments",
-                  "type": "comment_created",
-                  "timestamp": 1753454975808,
-                  "payload": {
-                    "body": "test comment",
-                    "createdAt": "2025-07-25T14:49:35.801298Z",
-                    "id": "1763355",
-                    "parentCommentID": "1763325",
-                    "parentEntityID": 18396,
-                    "parentEntityType": "Event",
-                    "profile": {
-                      "baseAddress": "0xce533188d53a16ed580fd5121dedf166d3482677",
-                      "displayUsernamePublic": true,
-                      "name": "salted.caramel",
-                      "proxyWallet": "0x4ca749dcfa93c87e5ee23e2d21ff4422c7a4c1ee",
-                      "pseudonym": "Adored-Disparity"
-                    },
-                    "reactionCount": 0,
-                    "replyAddress": "0x0bda5d16f76cd1d3485bcc7a44bc6fa7db004cdd",
-                    "reportCount": 0,
-                    "userAddress": "0xce533188d53a16ed580fd5121dedf166d3482677"
-                  }
-                }
-                """;
+    void testPolymarketLogicAggregatesTwoWindows() throws Exception {
+        TableEnvironment tEnv = createTableEnvironment();
+        long baseTime = Instant.parse("2023-10-01T10:00:00Z").toEpochMilli();
 
-        PolymarketEvent event = deserializer.deserialize(json.getBytes()); // Note: deserialize usually takes bytes
+        List<Row> events = Arrays.asList(
+                Row.of("topic1", "type1", baseTime, Row.of(1L, "body1")),
+                Row.of("topic1", "type1", baseTime + Duration.ofMinutes(5).toMillis(), Row.of(1L, "body2")),
+                Row.of("topic1", "type1", baseTime + Duration.ofMinutes(11).toMillis(), Row.of(1L, "body3"))
+        );
 
-        assertNotNull(event);
-        assertEquals("comments", event.getTopic());
-        assertEquals(18396L, event.getParentEntityID());
-        
-        // ... assertions ...
+        String sinkTableName = createSinkTableName();
+        List<String> results = executePolymarketLogic(tEnv, events, sinkTableName);
+
+        assertThat(results).hasSize(2);
+
+        Map<Long, Map<LocalDateTime, Long>> parsed = parseWindowResults(results);
+        LocalDateTime firstWindow = toLocalDateTime(baseTime + Duration.ofMinutes(10).toMillis());
+        LocalDateTime secondWindow = toLocalDateTime(baseTime + Duration.ofMinutes(20).toMillis());
+
+        assertThat(parsed).containsKey(1L);
+        Map<LocalDateTime, Long> windows = parsed.get(1L);
+        assertThat(windows).containsEntry(firstWindow, 2L);
+        assertThat(windows).containsEntry(secondWindow, 1L);
     }
-    
-    // ... [Include other deserialization tests here] ...
 
     @Test
-    public void testAggregationPipeline() throws Exception {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1);
-        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+    void testPolymarketLogicHandlesSingleEvent() throws Exception {
+        TableEnvironment tEnv = createTableEnvironment();
+        long baseTime = Instant.parse("2024-01-02T00:00:00Z").toEpochMilli();
 
-        // Create test data
-        long t1 = 1000L; // Inside Window 1 (0-10 min)
-        long t2 = 2000L; // Inside Window 1
-        long t3 = 600001L; // Inside Window 2 (10-20 min) - 10 mins + 1ms
+        Row singleEvent = Row.of("topic-single", "type-single", baseTime, Row.of(42L, "only-body"));
+        String sinkTableName = createSinkTableName();
+        List<String> results = executePolymarketLogic(tEnv, Collections.singletonList(singleEvent), sinkTableName);
 
-        PolymarketEvent event1 = createEvent(t1, 1L);
-        PolymarketEvent event2 = createEvent(t2, 1L);
-        PolymarketEvent event3 = createEvent(t3, 1L);
-        PolymarketEvent event4 = createEvent(t1, 2L);
+        assertThat(results).hasSize(1);
 
-        DataStream<PolymarketEvent> source = env.fromElements(event1, event2, event3, event4)
-                .assignTimestampsAndWatermarks(
-                        WatermarkStrategy.<PolymarketEvent>forBoundedOutOfOrderness(Duration.ofSeconds(0))
-                                .withTimestampAssigner((event, timestamp) -> event.getTimestamp())
-                );
+        Map<Long, Map<LocalDateTime, Long>> parsed = parseWindowResults(results);
+        LocalDateTime expectedWindow = toLocalDateTime(baseTime + Duration.ofMinutes(10).toMillis());
 
-        Table resultTable = Polymarket.computeMarketStats(tableEnv, source);
+        assertThat(parsed).containsKey(42L);
+        assertThat(parsed.get(42L)).containsEntry(expectedWindow, 1L);
+    }
 
-        // Convert result Table back to DataStream<Row> to verify results
-        DataStream<Row> resultStream = tableEnv.toDataStream(resultTable);
+    @Test
+    void testPolymarketLogicHandlesThreeConsecutiveWindows() throws Exception {
+        TableEnvironment tEnv = createTableEnvironment();
+        long baseTime = Instant.parse("2023-10-01T10:00:00Z").toEpochMilli();
 
-        List<Row> results = new ArrayList<>();
-        try (CloseableIterator<Row> iterator = resultStream.executeAndCollect()) {
-            while (iterator.hasNext()) {
-                results.add(iterator.next());
-            }
-        }
+        List<Row> events = Arrays.asList(
+                Row.of("topic1", "type1", baseTime, Row.of(1L, "body-a")),
+                Row.of("topic1", "type1", baseTime + Duration.ofMinutes(1).toMillis(), Row.of(1L, "body-b")),
+                Row.of("topic1", "type1", baseTime + Duration.ofMinutes(10).toMillis(), Row.of(1L, "body-c")),
+                Row.of("topic1", "type1", baseTime + Duration.ofMinutes(21).toMillis(), Row.of(1L, "body-d"))
+        );
 
-        // Verify results
-        // Expected Schema: parentEntityID (BIGINT), window_end (TIMESTAMP), cnt (BIGINT)
-        // Window 1 (0-10m): ID 1 -> count 2
-        // Window 1 (0-10m): ID 2 -> count 1
-        // Window 2 (10-20m): ID 1 -> count 1
-
-        System.out.println("Results: " + results);
+        String sinkTableName = createSinkTableName();
+        List<String> results = executePolymarketLogic(tEnv, events, sinkTableName);
 
         assertThat(results).hasSize(3);
 
-        // Helper to find row by ID and Window End
-        // Window 1 ends at 600,000ms
-        long window1End = 600_000L;
-        // Window 2 ends at 1,200,000ms
-        long window2End = 1_200_000L;
+        Map<Long, Map<LocalDateTime, Long>> parsed = parseWindowResults(results);
+        LocalDateTime windowEnd10 = toLocalDateTime(baseTime + Duration.ofMinutes(10).toMillis());
+        LocalDateTime windowEnd20 = toLocalDateTime(baseTime + Duration.ofMinutes(20).toMillis());
+        LocalDateTime windowEnd30 = toLocalDateTime(baseTime + Duration.ofMinutes(30).toMillis());
 
-        // ID 1, Window 1: count 2
-        Row id1Window1 = results.stream()
-                .filter(r -> (long) r.getField(0) == 1L && compareWindowEnd(r.getField(1), window1End))
-                .findFirst()
-                .orElse(null);
-        assertThat(id1Window1).isNotNull();
-        assertThat((long) id1Window1.getField(2)).isEqualTo(2L);
-
-        // ID 1, Window 2: count 1
-        Row id1Window2 = results.stream()
-                .filter(r -> (long) r.getField(0) == 1L && compareWindowEnd(r.getField(1), window2End))
-                .findFirst()
-                .orElse(null);
-        assertThat(id1Window2).isNotNull();
-        assertThat((long) id1Window2.getField(2)).isEqualTo(1L);
-
-        // ID 2, Window 1: count 1
-        Row id2Window1 = results.stream()
-                .filter(r -> (long) r.getField(0) == 2L && compareWindowEnd(r.getField(1), window1End))
-                .findFirst()
-                .orElse(null);
-        assertThat(id2Window1).isNotNull();
-        assertThat((long) id2Window1.getField(2)).isEqualTo(1L);
+        assertThat(parsed).containsKey(1L);
+        Map<LocalDateTime, Long> windows = parsed.get(1L);
+        assertThat(windows).containsEntry(windowEnd10, 2L);
+        assertThat(windows).containsEntry(windowEnd20, 1L);
+        assertThat(windows).containsEntry(windowEnd30, 1L);
+        assertThat(windows).hasSize(3);
     }
 
-    private boolean compareWindowEnd(Object field, long expectedMillis) {
-        long actualMillis;
-        if (field instanceof java.time.LocalDateTime) {
-            actualMillis = ((java.time.LocalDateTime) field).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
-        } else if (field instanceof java.time.Instant) {
-            actualMillis = ((java.time.Instant) field).toEpochMilli();
-        } else {
-            throw new RuntimeException("Unknown time type: " + field.getClass());
+    private static TableEnvironment createTableEnvironment() {
+        EnvironmentSettings settings = EnvironmentSettings.newInstance().inStreamingMode().build();
+        return TableEnvironment.create(settings);
+    }
+
+    private static List<String> executePolymarketLogic(TableEnvironment tEnv, List<Row> data, String sinkTableName) throws Exception {
+        String dataId = TestValuesTableFactory.registerData(data);
+        tEnv.executeSql(String.format(SOURCE_DDL_TEMPLATE, dataId));
+        tEnv.executeSql(String.format(SINK_DDL_TEMPLATE, sinkTableName));
+        tEnv.executeSql(String.format(INSERT_SQL_TEMPLATE, sinkTableName)).await();
+        List<String> results = TestValuesTableFactory.getResultsAsStrings(sinkTableName);
+        Collections.sort(results);
+        return results;
+    }
+
+    private static Map<Long, Map<LocalDateTime, Long>> parseWindowResults(List<String> results) {
+        Map<Long, Map<LocalDateTime, Long>> parsed = new HashMap<>();
+        for (String result : results) {
+            int start = result.indexOf('[');
+            int end = result.lastIndexOf(']');
+            if (start == -1 || end == -1) {
+                continue;
+            }
+            String payload = result.substring(start + 1, end);
+            String[] parts = payload.split(",\\s+");
+            long parentEntityId = Long.parseLong(parts[0]);
+            LocalDateTime windowTimestamp = LocalDateTime.parse(parts[1]);
+            long count = Long.parseLong(parts[2]);
+            parsed.computeIfAbsent(parentEntityId, ignored -> new HashMap<>()).put(windowTimestamp, count);
         }
-        return actualMillis == expectedMillis;
+        return parsed;
     }
 
-    private PolymarketEvent createEvent(long timestamp, long parentEntityID) {
-        CommentPayload payload = new CommentPayload();
-        payload.setParentEntityID(parentEntityID);
-        return new PolymarketEvent("topic", "type", timestamp, payload);
+    private static LocalDateTime toLocalDateTime(long epochMillis) {
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneId.systemDefault());
+    }
+
+    private static String createSinkTableName() {
+        return "sink_stats_" + UUID.randomUUID().toString().replace("-", "_");
     }
 }

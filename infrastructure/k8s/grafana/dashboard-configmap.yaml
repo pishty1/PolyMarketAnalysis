@@ -107,7 +107,7 @@ data:
               "group": [],
               "metricColumn": "none",
               "rawQuery": true,
-              "rawSql": "SELECT\n  parent_entity_id,\n  window_timestamp AS time,\n  count\nFROM\n  market_stats\nWHERE\n  $__timeFilter(window_timestamp) AND count > 1\nORDER BY\n  window_timestamp ASC",
+              "rawSql": "SELECT\n  parent_entity_id,\n  window_timestamp AS time,\n  cnt\nFROM\n  market_stats\nWHERE\n  $__timeFilter(window_timestamp) AND cnt > 1\nORDER BY\n  window_timestamp ASC",
               "refId": "A",
               "select": [
                 [

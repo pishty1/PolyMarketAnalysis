@@ -16,7 +16,7 @@
 # limitations under the License.
 ################################################################################
 
-FROM flink:1.20.1-java17
+FROM apache/flink:2.2-java21
 
 # Enable Prometheus Reporter
 RUN mkdir -p /opt/flink/plugins/metrics-prometheus && \
