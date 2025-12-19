@@ -6,7 +6,10 @@ This project implements a real-time data pipeline for Polymarket, consisting of 
 
 1.  **Ingestion Producer**: A Python application that subscribes to Polymarket's WebSocket API and pushes market events to Kafka.
 2.  **Kafka**: Acts as the message broker buffering events.
-3.  **Flink Analytics**: A Java-based Flink job that consumes events from Kafka, performs real-time aggregation/analytics.
+3.  **Flink Analytics**:
+    -   **Market Analytics**: A Java-based Flink job that consumes events from Kafka, performs real-time aggregation/analytics.
+    -   **Sentiment Analysis**: A Flink job that performs sentiment analysis on market data.
+    -   **Session Cluster**: An interactive Flink session cluster for ad-hoc job submission.
 4.  **Infrastructure**: The entire stack runs on Kubernetes, managed via Helm charts and K8s manifests. Includes Prometheus/Grafana for monitoring and Postgres for storage.
 
 ## Project Structure
@@ -16,7 +19,7 @@ This project implements a real-time data pipeline for Polymarket, consisting of 
     - `flink-analytics/`: Flink Java application for processing data streams.
 - `infrastructure/`
     - `helm/`: Values files for Helm charts (Kafka, Postgres, Prometheus).
-    - `k8s/`: Kubernetes manifests for deployments, services, and the Flink Operator.
+    - `k8s/`: Kubernetes manifests for deployments, services, and the Flink Operator (including Market Analytics, Sentiment Analysis, and Session Cluster).
 - `Tiltfile`: Configuration for local development with Tilt.
 
 ## Prerequisites
@@ -56,8 +59,8 @@ tilt up
 
 Tilt will automatically:
 - Install infrastructure (Flink Operator, Kafka, Postgres, Prometheus/Grafana)
-- Build Docker images for the Ingestion Producer and Flink Analytics job
-- Deploy all applications with proper dependency ordering
+- Build Docker images for the Ingestion Producer and Flink Analytics jobs
+- Deploy all applications (Ingestion, Market Analytics, Sentiment Analysis, Session Cluster) with proper dependency ordering
 - Set up port forwarding for services
 
 
@@ -77,9 +80,21 @@ kubectl port-forward svc/prometheus-grafana 3000:80
 ```
 [http://localhost:3000](http://localhost:3000)
 
-### To access the Flink UI run this command in a separate terminal:
-```
+### To access the Flink UIs run these commands in separate terminals:
+
+**Market Analytics:**
+```bash
 kubectl port-forward svc/poly-example-rest 8081
+```
+
+**Sentiment Analysis:**
+```bash
+kubectl port-forward svc/poly-sentiment-rest 8082:8081
+```
+
+**Session Cluster:**
+```bash
+kubectl port-forward svc/flink-session-rest 8083:8081
 ```
 
 
