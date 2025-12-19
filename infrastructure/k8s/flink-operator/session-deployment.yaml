@@ -1,0 +1,21 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: flink-session
+spec:
+  image: flink-analytics:latest # Use same image so it has your connectors/dependencies
+  imagePullPolicy: IfNotPresent
+  flinkVersion: v2_2 # Match your actual Flink version
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "4"
+    rest.port: "8081"
+  serviceAccount: flink
+  jobManager:
+    resource:
+      memory: "1024m"
+      cpu: 0.5
+  taskManager:
+    resource:
+      memory: "1024m"
+      cpu: 0.5
+  # No 'job' spec here -> Starts as Session Cluster

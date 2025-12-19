@@ -22,5 +22,15 @@ primary:
             parent_entity_id VARCHAR(255),
             window_timestamp TIMESTAMP,
             cnt INT,
+            sentiment TEXT,
             PRIMARY KEY (parent_entity_id, window_timestamp)
         );
+
+        CREATE TABLE IF NOT EXISTS market_sentiment (
+            parent_entity_id VARCHAR(255),
+            window_timestamp TIMESTAMP,
+            combined_comments TEXT,
+            sentiment_result TEXT,
+            PRIMARY KEY (parent_entity_id, window_timestamp)
+        );
+

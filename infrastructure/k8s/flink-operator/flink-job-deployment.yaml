@@ -28,22 +28,17 @@ spec:
     taskmanager.numberOfTaskSlots: "1"
     metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
     metrics.reporter.prom.port: "9249-9250"
-    restart-strategy.type: exponential-delay
-    restart-strategy.exponential-delay.initial-backoff: 1s
-    restart-strategy.exponential-delay.max-backoff: 60s
-    restart-strategy.exponential-delay.backoff-multiplier: "2.0"
-    restart-strategy.exponential-delay.reset-backoff-threshold: 10min
-    restart-strategy.exponential-delay.jitter-factor: "0.1"
   serviceAccount: flink
   jobManager:
     resource:
-      memory: "2048m"
+      memory: "1024m"
       cpu: 1
   taskManager:
     resource:
-      memory: "2048m"
+      memory: "1024m"
       cpu: 1
   job:
     jarURI: local:///opt/flink/usrlib/poly.jar
+    entryClass: org.apache.flink.examples.Polymarket
     parallelism: 1
     upgradeMode: stateless

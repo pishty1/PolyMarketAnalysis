@@ -13,7 +13,7 @@ data:
       },
       "editable": true,
       "gnetId": null,
-      "graphTooltip": 0,
+      "graphTooltip": 1,
       "id": null,
       "links": [],
       "panels": [
@@ -22,6 +22,7 @@ data:
             "type": "postgres",
             "uid": ""
           },
+          "description": "Volume per Market ID, colored by Sentiment.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -30,10 +31,10 @@ data:
               "custom": {
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
-                "axisLabel": "",
+                "axisLabel": "Comment Count",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
-                "drawStyle": "line",
+                "drawStyle": "bars",
                 "fillOpacity": 80,
                 "gradientMode": "none",
                 "hideFrom": {
@@ -51,7 +52,7 @@ data:
                 "spanNulls": false,
                 "stacking": {
                   "group": "A",
-                  "mode": "none"
+                  "mode": "normal"
                 },
                 "thresholdsStyle": {
                   "mode": "off"
@@ -68,34 +69,89 @@ data:
                 ]
               }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*Positive.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#73BF69",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*Negative.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#F2495C",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*Neutral.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#FF9830",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*Unknown.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#808080",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
           },
           "gridPos": {
-            "h": 12,
-            "w": 24,
+            "h": 22,
+            "w": 21,
             "x": 0,
             "y": 0
           },
           "id": 1,
           "options": {
             "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
+              "calcs": [
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "right",
               "showLegend": true
             },
             "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            },
-            "barRadius": 0,
-            "barWidth": 0.97,
-            "groupWidth": 0.7,
-            "orientation": "auto",
-            "showValue": "auto",
-            "stacking": "none",
-            "xTickLabelRotation": 0,
-            "xTickLabelSpacing": 0
+              "mode": "multi",
+              "sort": "desc"
+            }
           },
           "targets": [
             {
@@ -107,7 +163,7 @@ data:
               "group": [],
               "metricColumn": "none",
               "rawQuery": true,
-              "rawSql": "SELECT\n  parent_entity_id,\n  window_timestamp AS time,\n  cnt\nFROM\n  market_stats\nWHERE\n  $__timeFilter(window_timestamp) AND cnt > 1\nORDER BY\n  window_timestamp ASC",
+              "rawSql": "SELECT\n  CAST(s.parent_entity_id AS VARCHAR) || ' (' || COALESCE(m.sentiment_result, 'Unknown') || ')' as metric,\n  s.window_timestamp AS time,\n  s.cnt\nFROM market_stats s\nLEFT JOIN market_sentiment m \n  ON CAST(s.parent_entity_id AS VARCHAR) = m.parent_entity_id \n  AND s.window_timestamp = m.window_timestamp\nWHERE\n  $__timeFilter(s.window_timestamp)\nORDER BY\n  s.window_timestamp ASC",
               "refId": "A",
               "select": [
                 [
@@ -130,8 +186,23 @@ data:
               ]
             }
           ],
-          "title": "Polymarket Stats",
-          "type": "barchart"
+          "title": "Market Activity (Colored by Sentiment)",
+          "type": "timeseries"
+        },
+        {
+          "id": 3,
+          "gridPos": {
+            "h": 8,
+            "w": 3,
+            "x": 21,
+            "y": 0
+          },
+          "type": "text",
+          "title": "Sentiment Key",
+          "options": {
+            "mode": "html",
+            "content": "<div style=\"font-size: 14px; line-height: 1.5;\">\n  <div style=\"margin-bottom: 5px;\">\n    <span style=\"color: #73BF69; font-size: 1.5em; vertical-align: middle;\">&#9632;</span> \n    <span style=\"vertical-align: middle;\">Positive</span>\n  </div>\n  <div style=\"margin-bottom: 5px;\">\n    <span style=\"color: #F2495C; font-size: 1.5em; vertical-align: middle;\">&#9632;</span> \n    <span style=\"vertical-align: middle;\">Negative</span>\n  </div>\n  <div style=\"margin-bottom: 5px;\">\n    <span style=\"color: #FF9830; font-size: 1.5em; vertical-align: middle;\">&#9632;</span> \n    <span style=\"vertical-align: middle;\">Neutral</span>\n  </div>\n  <div>\n    <span style=\"color: #808080; font-size: 1.5em; vertical-align: middle;\">&#9632;</span> \n    <span style=\"vertical-align: middle;\">Unknown</span>\n  </div>\n</div>"
+          }
         }
       ],
       "schemaVersion": 38,
@@ -148,6 +219,6 @@ data:
       "timezone": "",
       "title": "Polymarket Dashboard",
       "uid": "polymarket-stats-uid",
-      "version": 1,
+      "version": 6,
       "weekStart": ""
     }

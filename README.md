@@ -105,3 +105,8 @@ Tilt provides **live reload** - changes to source files automatically trigger re
 ### Modifying the Ingestion Producer
 1.  Edit code in `apps/ingestion-producer/`.
 2.  Tilt automatically rebuilds and redeploys the container.
+
+
+SQL Client 
+
+./bin/sql-client.sh embedded -Drest.address=localhost -Drest.port=8081

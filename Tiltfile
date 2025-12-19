@@ -28,14 +28,15 @@ helm_resource('flink-kubernetes-operator',
 
 # --- Kafka ---
 k8s_yaml('infrastructure/k8s/kafka.yaml')
-k8s_resource('kafka', labels=labels_infra)
+k8s_resource('kafka', labels=labels_infra, port_forwards=['9092:9092'])
 
 # --- Postgres ---
 helm_repo('bitnami', 'https://charts.bitnami.com/bitnami', labels=labels_repos)
 helm_resource('postgres', 
               'bitnami/postgresql',
               flags=['-f', 'infrastructure/helm/postgres-values.yaml'],
-              labels=labels_infra)
+              labels=labels_infra,
+              port_forwards=['5432:5432'])
 
 
 # --- Prometheus ---
@@ -47,7 +48,7 @@ helm_resource(
   flags=['-f', 'infrastructure/helm/prometheus-values.yaml'],
   labels=labels_infra,
   pod_readiness='wait',
-#   port_forwards=['3000:80'],
+#   port_forwards=['3000:80']
 )
 
 # ==========================================================
@@ -91,8 +92,27 @@ k8s_yaml('infrastructure/k8s/flink-operator/flink-job-deployment.yaml')
 k8s_kind('FlinkDeployment', image_json_path='{.spec.image}')
 k8s_resource('poly-example',
     labels=labels_app,
+    # port_forwards=['8081:8081'], 
     resource_deps=['flink-kubernetes-operator', 'kafka', 'postgres', 'maven-compile']
 )
+
+
+# 2. NEW Job (Sentiment)
+k8s_yaml('infrastructure/k8s/flink-operator/sentiment-job-deployment.yaml')
+k8s_resource('poly-sentiment',
+    labels=labels_app,
+    resource_deps=['flink-kubernetes-operator', 'kafka', 'postgres', 'maven-compile', 'poly-example']
+)
+
+
+# 2. Interactive Session Cluster (For LLM Client)
+k8s_yaml('infrastructure/k8s/flink-operator/session-deployment.yaml')
+k8s_resource('flink-session',
+    labels=['Interactive'],
+    # port_forwards=['8083:8081'], # Map local 8083 -> Cluster 8081
+    resource_deps=['flink-kubernetes-operator', 'maven-compile']
+)
+
 
 # local_resource(
 #     'flink-ui-forward',

@@ -5,3 +5,5 @@ tasks/
 navigator.config.json
 .smartsearch-conf.json
 __pycache__
+dependency-reduced-pom.xml
+apps/flink-analytics/jobs/poly/deps/

@@ -18,6 +18,12 @@
 
 FROM apache/flink:2.2-java21
 
+COPY deps/flink-sql-connector-kafka-4.0.1-2.0.jar /opt/flink/lib/
+COPY deps/flink-connector-jdbc-core-4.0.0-2.0.jar /opt/flink/lib/
+COPY deps/flink-connector-jdbc-postgres-4.0.0-2.0.jar /opt/flink/lib/
+COPY deps/postgresql-42.7.8.jar /opt/flink/lib/
+COPY deps/flink-model-openai-2.2.0.jar /opt/flink/lib/
+
 # Enable Prometheus Reporter
 RUN mkdir -p /opt/flink/plugins/metrics-prometheus && \
     find /opt/flink -name "flink-metrics-prometheus-*.jar" -exec cp {} /opt/flink/plugins/metrics-prometheus/ \;
