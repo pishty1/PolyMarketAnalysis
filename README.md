@@ -122,6 +122,7 @@ Tilt provides **live reload** - changes to source files automatically trigger re
 2.  Tilt automatically rebuilds and redeploys the container.
 
 
-SQL Client 
+For an interactive session download Flink jars and use the sql-client to interact with the session cluster:
 
-./bin/sql-client.sh embedded -Drest.address=localhost -Drest.port=8081
+```bash
+./bin/sql-client.sh embedded -Drest.address=localhost -Drest.port=8083
